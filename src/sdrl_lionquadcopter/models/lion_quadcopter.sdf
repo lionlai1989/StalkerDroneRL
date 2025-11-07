@@ -1,0 +1,154 @@
+<?xml version="1.0"?>
+<!-- The /usr/share/gz/gz-sim8/worlds/quadcopter.sdf is the original quadcopter model.
+     This file lion_quadcopter.sdf is a modified version of that model -->
+<!-- The original model of the quadcopter body is from "https://fuel.gazebosim.org/1.0/OpenRobotics/models/X3 UAV/4",
+     which is downloaded and located at "/home/lion/.gz/fuel/fuel.gazebosim.org/openrobotics/models/x3\ uav/4/model.sdf".
+     I copy and rename the downloaded folder from "/home/lion/.gz/fuel/fuel.gazebosim.org/openrobotics/models/x3\ uav/4"
+     to "src/sdrl_lionquadcopter/models/x3_uav". -->
+<!-- The quadcopter body model is loaded and used in its original form. -->
+<sdf version="1.7">
+  <model name="lion_quadcopter">
+    <!-- Include the X3 UAV as a nested model and attach plugins to it -->
+
+    <include>
+      <uri>model://x3_uav</uri>
+      <name>X3</name>
+
+      <plugin filename="gz-sim-multicopter-motor-model-system"
+              name="gz::sim::systems::MulticopterMotorModel">
+        <robotNamespace>X3</robotNamespace>
+        <jointName>X3/rotor_0_joint</jointName>
+        <linkName>X3/rotor_0</linkName>
+        <turningDirection>ccw</turningDirection>
+        <timeConstantUp>0.0125</timeConstantUp>
+        <timeConstantDown>0.025</timeConstantDown>
+        <maxRotVelocity>800.0</maxRotVelocity>
+        <motorConstant>8.54858e-06</motorConstant>
+        <momentConstant>0.016</momentConstant>
+        <commandSubTopic>gazebo/command/motor_speed</commandSubTopic>
+        <actuator_number>0</actuator_number>
+        <rotorDragCoefficient>8.06428e-05</rotorDragCoefficient>
+        <rollingMomentCoefficient>1e-06</rollingMomentCoefficient>
+        <motorSpeedPubTopic>motor_speed/0</motorSpeedPubTopic>
+        <rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim>
+        <motorType>velocity</motorType>
+      </plugin>
+      <plugin filename="gz-sim-multicopter-motor-model-system"
+              name="gz::sim::systems::MulticopterMotorModel">
+        <robotNamespace>X3</robotNamespace>
+        <jointName>X3/rotor_1_joint</jointName>
+        <linkName>X3/rotor_1</linkName>
+        <turningDirection>ccw</turningDirection>
+        <timeConstantUp>0.0125</timeConstantUp>
+        <timeConstantDown>0.025</timeConstantDown>
+        <maxRotVelocity>800.0</maxRotVelocity>
+        <motorConstant>8.54858e-06</motorConstant>
+        <momentConstant>0.016</momentConstant>
+        <commandSubTopic>gazebo/command/motor_speed</commandSubTopic>
+        <actuator_number>1</actuator_number>
+        <rotorDragCoefficient>8.06428e-05</rotorDragCoefficient>
+        <rollingMomentCoefficient>1e-06</rollingMomentCoefficient>
+        <motorSpeedPubTopic>motor_speed/1</motorSpeedPubTopic>
+        <rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim>
+        <motorType>velocity</motorType>
+      </plugin>
+      <plugin filename="gz-sim-multicopter-motor-model-system"
+              name="gz::sim::systems::MulticopterMotorModel">
+        <robotNamespace>X3</robotNamespace>
+        <jointName>X3/rotor_2_joint</jointName>
+        <linkName>X3/rotor_2</linkName>
+        <turningDirection>cw</turningDirection>
+        <timeConstantUp>0.0125</timeConstantUp>
+        <timeConstantDown>0.025</timeConstantDown>
+        <maxRotVelocity>800.0</maxRotVelocity>
+        <motorConstant>8.54858e-06</motorConstant>
+        <momentConstant>0.016</momentConstant>
+        <commandSubTopic>gazebo/command/motor_speed</commandSubTopic>
+        <actuator_number>2</actuator_number>
+        <rotorDragCoefficient>8.06428e-05</rotorDragCoefficient>
+        <rollingMomentCoefficient>1e-06</rollingMomentCoefficient>
+        <motorSpeedPubTopic>motor_speed/2</motorSpeedPubTopic>
+        <rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim>
+        <motorType>velocity</motorType>
+      </plugin>
+      <plugin filename="gz-sim-multicopter-motor-model-system"
+              name="gz::sim::systems::MulticopterMotorModel">
+        <robotNamespace>X3</robotNamespace>
+        <jointName>X3/rotor_3_joint</jointName>
+        <linkName>X3/rotor_3</linkName>
+        <turningDirection>cw</turningDirection>
+        <timeConstantUp>0.0125</timeConstantUp>
+        <timeConstantDown>0.025</timeConstantDown>
+        <maxRotVelocity>800.0</maxRotVelocity>
+        <motorConstant>8.54858e-06</motorConstant>
+        <momentConstant>0.016</momentConstant>
+        <commandSubTopic>gazebo/command/motor_speed</commandSubTopic>
+        <actuator_number>3</actuator_number>
+        <rotorDragCoefficient>8.06428e-05</rotorDragCoefficient>
+        <rollingMomentCoefficient>1e-06</rollingMomentCoefficient>
+        <motorSpeedPubTopic>motor_speed/3</motorSpeedPubTopic>
+        <rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim>
+        <motorType>velocity</motorType>
+      </plugin>
+
+      <plugin name='sdrl::LionQuadcopter' filename='liblion_quadcopter_plugin.so'>
+        <namespace>/X3</namespace>
+
+        <bodyName>base_footprint</bodyName>
+      </plugin>
+
+    </include>
+
+    <!-- Bottom Camera mounted to drone -->
+    <link name="bottom_camera_link">
+      <!-- Pose defined at the link origin; joint provides mounting offset -->
+      <!-- Initially, when pose is (0 0 0 0 0 0), the captured image is looking
+      towards +X direction because there is a ball in the center of the image
+      and the ball is placed at (1.5, 0, 0.15) in the world frame.
+      This phenomenon means that the camera rotates 90 degrees about Y axis to
+      look towards +X direction. So here, if pose is (0 0 0 0 1.57075 0), it means
+      the camera rotates another 90 degrees about Y axis to look towards -Z direction
+      (look down).
+      In total, the camera rotates 180 degrees about Y axis to look towards -Z direction.
+      -->
+      <pose>0 0 0 0 1.57075 0</pose>
+      <inertial>
+        <mass>0.01</mass>
+        <inertia>
+          <ixx>1e-6</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>1e-6</iyy>
+          <iyz>0</iyz>
+          <izz>1e-6</izz>
+        </inertia>
+      </inertial>
+      <sensor name="downward_camera" type="camera">
+        <always_on>true</always_on>
+        <visualize>true</visualize>
+        <update_rate>10</update_rate> <!-- (Hz) -->
+        <topic>/X3/gz_bottom_cam/image_raw</topic>
+        <camera name="downward_cam">
+          <horizontal_fov>1.5</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.1</near>
+            <far>100</far>
+          </clip>
+          <camera_info_topic>/X3/gz_bottom_cam/camera_info</camera_info_topic>
+        </camera>
+      </sensor>
+    </link>
+    <joint name="bottom_camera_mount" type="fixed">
+      <parent>X3::X3/base_link</parent>
+      <child>bottom_camera_link</child>
+      <pose>0 0 0 0 0 0</pose>
+    </joint>
+
+  </model>
+</sdf>
+
