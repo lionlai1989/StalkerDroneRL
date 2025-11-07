@@ -5,6 +5,8 @@
   <description>Lion Quadcopter System Plugin</description>
   <maintainer email="lionlai1989@gmail.com">Chih-An Lion Lai</maintainer>
   <license>Apache-2.0</license>
+  <!-- Third-party model assets under models/ retain their original licenses (e.g., CC-BY-4.0). -->
+  <license>CC-BY-4.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
