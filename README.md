@@ -3,7 +3,9 @@
 **StalkerDroneRL** is a fully containerized ROS 2 + Gazebo project that simulates a quadcopter
 *stalking a red ball*.
 
-Attach a GIF or MP4 here.
+<video width="640" controls>
+  <source src="https://github.com/user-attachments/assets/a0ed7a53-b3c4-4faa-8ca0-1d236d85ee02" type="video/webm">
+</video>
 
 ---
 
