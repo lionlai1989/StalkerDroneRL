@@ -1,4 +1,4 @@
-# StalkerDroneRL - ROS 2 Humble & Gazebo Harmonic Drone Simulation
+# StalkerDroneRL - ROS 2 + Gazebo Drone Simulation
 
 **StalkerDroneRL** is a fully containerized ROS 2 + Gazebo project that simulates a quadcopter
 *stalking a red ball*.
