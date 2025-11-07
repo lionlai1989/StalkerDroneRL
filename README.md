@@ -11,8 +11,9 @@
 
 - **ROS 2 Humble + Gazebo Harmonic** — uses recent, long-term support versions.
 
-- **Completely containerized** — I went through the *installation hell* of ROS 2 and Gazebo so you
-  don't have to. One `docker compose up` and everything just works.
+- **Completely containerized environment** — I went through the *installation hell* of ROS 2 and
+  Gazebo so you don't have to. During development, all you need is VS Code. For deployment, just run
+  `docker compose up` and everything just works.
 
 - **Everything built from scratch** — all algorithms here are built from scratch, ranging from the geometric
   controller (output low-level motor speed commands) to object detection. This is not a "just tune
@@ -23,7 +24,6 @@
   speeds, or the camera's FOV for your hardware platform.
 
 ---
-
 
 ## Architecture
 
@@ -79,7 +79,7 @@ source /opt/ros/humble/setup.bash \
 && colcon build --symlink-install --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 && source "./install/setup.bash" \
 && ros2 launch sdrl_bringup stalker_drone_launch.py \
-use_rviz:=true use_gui:=true ball_speed:=1.0 ball_trajectory:=circle control_mode:=geometric
+  use_rviz:=true use_gui:=true ball_speed:=1.0 ball_trajectory:=circle control_mode:=geometric
 ```
 
 If everything goes well, you should see Gazebo and RViz launch, as shown at the beginning of this
