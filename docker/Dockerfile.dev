@@ -1,0 +1,133 @@
+# Base image: Ubuntu 22.04
+FROM ubuntu:22.04
+
+ARG ROS_DISTRO=humble
+ENV DEBIAN_FRONTEND=noninteractive
+
+ARG USER_ID=1000
+ARG GROUP_ID=${USER_ID}
+ARG USER_NAME=lion
+
+# Install system dependencies
+RUN apt update && apt install -y \
+    curl \
+    wget \
+    unzip \
+    lsb-release \
+    software-properties-common \
+    build-essential \
+    nano \
+    less \
+    xterm \
+    sudo \
+    clangd \
+    python3-pip \
+    git \
+    gdb \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install ROS 2 Humble
+RUN add-apt-repository universe && apt update \
+    && export ROS_APT_SOURCE_VERSION=$(curl -s https://api.github.com/repos/ros-infrastructure/ros-apt-source/releases/latest | grep -F "tag_name" | awk -F\" '{print $4}') \
+    && curl -L -o /tmp/ros2-apt-source.deb "https://github.com/ros-infrastructure/ros-apt-source/releases/download/${ROS_APT_SOURCE_VERSION}/ros2-apt-source_${ROS_APT_SOURCE_VERSION}.$(. /etc/os-release && echo $VERSION_CODENAME)_all.deb" \
+    && dpkg -i /tmp/ros2-apt-source.deb \
+    && rm /tmp/ros2-apt-source.deb \
+    && apt update \
+    && apt upgrade -y \
+    && apt install -y ros-${ROS_DISTRO}-desktop python3-colcon-common-extensions python3-rosdep \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Gazebo Harmonic
+RUN curl -sSL https://packages.osrfoundation.org/gazebo.gpg -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] \
+    https://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" \
+    > /etc/apt/sources.list.d/gazebo-stable.list \
+    && apt update \
+    && apt install -y gz-harmonic
+
+# Configure Gazebo Harmonic runtime paths. When is XDG_RUNTIME_DIR used? By whom?
+ENV QT_X11_NO_MITSHM=1 \
+    XDG_RUNTIME_DIR=/tmp/runtime-root
+RUN mkdir -p ${XDG_RUNTIME_DIR} && chmod 0700 ${XDG_RUNTIME_DIR}
+
+# Tell Gazebo where to find models and assets.
+# - GZ_SIM_RESOURCE_PATH resolves model:// URIs used by worlds/SDF.
+# - Include the user's ~/.gazebo/models cache and this repo's models.
+ENV GZ_SIM_RESOURCE_PATH=/home/${USER_NAME}/.gazebo/models:/home/${USER_NAME}/StalkerDroneRL/src/sdrl_lionquadcopter/models:${GZ_SIM_RESOURCE_PATH}
+# Some loaders also use GZ_FILE_PATH for meshes/materials.
+ENV GZ_FILE_PATH=/home/${USER_NAME}/.gazebo/models:/home/${USER_NAME}/StalkerDroneRL/src/sdrl_lionquadcopter/models:${GZ_FILE_PATH}
+
+# Install ROS-GZ integration. DO NOT install Gazebo Classic
+RUN apt update && apt install -y \
+    ros-${ROS_DISTRO}-ros-gz \
+    ros-${ROS_DISTRO}-ros-gz-bridge \
+    ros-${ROS_DISTRO}-ros-gz-sim \
+    && rm -rf /var/lib/apt/lists/*
+
+# Reinforcement Learning Python dependencies.
+# This installs CPU-only PyTorch from PyPI.
+# Use numpy<2 to keep ABI compatibility with system-built modules like OpenCV.
+# gymnasium: 1.2.1
+# stable-baselines3: 2.7.0
+# torch: 2.9.0
+#
+# To use a GPU build of PyTorch instead, replace the line below with (example for CUDA 12.6 wheels):
+# RUN pip3 install --no-cache-dir \
+#     "numpy<2" \
+#     gymnasium \
+#     stable-baselines3 \
+#     torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+# (Requires host NVIDIA driver + NVIDIA Container Toolkit; CUDA runtime is bundled with the wheels.)
+RUN pip3 install --no-cache-dir \
+    "numpy<2" \
+    gymnasium \
+    stable-baselines3 \
+    torch \
+    tensorboard
+
+# protobuf 3.20.3 is required for Gazebo Harmonic Python bindings.
+# If this call came from a _pb2.py file, your generated code is out of date and must be regenerated
+# with protoc >= 3.19.0.
+RUN pip3 install --no-cache-dir "protobuf==3.20.3"
+
+# Initialize rosdep
+RUN rosdep init || true && rosdep update
+
+# Fetch Gazebo models. Is the model latest and compatible with gazebo harmonic?
+RUN curl -L https://github.com/osrf/gazebo_models/archive/refs/heads/master.zip -o /tmp/gazebo_models.zip \
+    && unzip /tmp/gazebo_models.zip -d /tmp \
+    && mkdir -p /home/${USER_NAME}/.gazebo/models/ \
+    && mv /tmp/gazebo_models-master/* /home/${USER_NAME}/.gazebo/models/ \
+    && rm -rf /tmp/gazebo_models*
+
+# Install ROS build dependencies & build workspace
+WORKDIR /home/${USER_NAME}/StalkerDroneRL
+RUN apt update && \
+    /bin/bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && \
+    if [ -d src ] && [ \"$(ls -A src 2>/dev/null)\" ]; then \
+    rosdep update || true; \
+    rosdep install --from-paths src --ignore-src -r -y; \
+    colcon build --symlink-install --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON; \
+    else \
+    echo 'No src/ at build time; skipping rosdep/colcon'; \
+    fi" \
+    && apt-get clean
+
+# Make Gazebo Sim discover system plugins (lib*.so) built from this workspace
+ENV GZ_SIM_SYSTEM_PLUGIN_PATH=/home/${USER_NAME}/StalkerDroneRL/install/sdrl_lionquadcopter/lib:${GZ_SIM_SYSTEM_PLUGIN_PATH}
+
+# Create non-root user for development and set ownership
+RUN groupadd -g ${GROUP_ID} ${USER_NAME} || true \
+    && useradd -m -u ${USER_ID} -g ${GROUP_ID} -s /bin/bash ${USER_NAME} \
+    && usermod -aG sudo ${USER_NAME} \
+    # Add common GPU access groups inside container; host GIDs mapped via compose group_add
+    && groupadd -g 44 video || true \
+    && groupadd -g 109 render || true \
+    && usermod -aG video,render ${USER_NAME} \
+    && echo "${USER_NAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/90-${USER_NAME} \
+    && chown -R ${USER_NAME}:${USER_NAME} /home/${USER_NAME}
+
+ENV HOME=/home/${USER_NAME}
+USER ${USER_NAME}
+
+CMD ["/bin/bash", "-c", "source /opt/ros/humble/setup.bash && if [ -f /home/${USER_NAME}/StalkerDroneRL/install/setup.bash ]; then source /home/${USER_NAME}/StalkerDroneRL/install/setup.bash; fi && bash"]

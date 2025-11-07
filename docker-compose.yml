@@ -1,0 +1,49 @@
+# docker-compose.yml
+services:
+  # Development service - interactive container for coding
+  dev:
+    image: stalkerdronerl:dev
+    container_name: stalkerdronerl_dev
+    build:
+      context: . # project root
+      dockerfile: docker/Dockerfile.dev
+      args:
+        # use HOST_UID if set and non-empty; otherwise use 1000
+        USER_ID: ${HOST_UID:-1000}
+        GROUP_ID: ${HOST_GID:-1000}
+        USER_NAME: lion
+
+    environment:
+      - TERM=xterm-256color
+      - DISPLAY=${DISPLAY}
+      - WAYLAND_DISPLAY=${WAYLAND_DISPLAY}
+      - XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
+
+    volumes:
+      # Mount full project to container workspace for development
+      - ./:/home/lion/StalkerDroneRL:rw
+      # Mount X11 socket for GUI
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+
+    devices:
+      - /dev/dri:/dev/dri # direct rendering for GPU
+    # Enable GPU (requires NVIDIA Container Toolkit if using NVIDIA)
+    gpus: all
+
+    # Allow container processes to join host DRM groups by GID (override via .env if needed)
+    group_add:
+      - "${HOST_RENDER_GID:-109}"
+      - "${HOST_VIDEO_GID:-44}"
+
+    # Permit read/write/mmap on DRM character devices (major 226)
+    device_cgroup_rules:
+      - "c 226:* rmw"
+
+    tty: true
+    stdin_open: true
+    network_mode: host
+    # Keep the container alive so VS Code can attach for debugging
+    command: [ "/bin/bash", "-lc", "cd /home/lion/StalkerDroneRL && echo container ready; while sleep 3600; do :; done" ]
+    restart: unless-stopped
