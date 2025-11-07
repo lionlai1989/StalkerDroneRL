@@ -1,0 +1,8 @@
+CompileFlags:
+  # Tell clangd where to find compile_commands.json
+  CompilationDatabase: build
+  Add: [ -std=c++17 ]
+
+Index:
+  Background: Build
+
