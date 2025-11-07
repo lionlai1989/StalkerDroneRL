@@ -115,6 +115,10 @@ All materials used during development are recorded here.
 - E. Tal and S. Karaman,
 “Accurate Tracking of Aggressive Quadrotor Trajectories Using Incremental Nonlinear Dynamic Inversion and Differential Flatness,” IEEE T-CST, 2021.
 
+### Deep Reinforcement Learning and Control
+- [CS 285: Deep Reinforcement Learning (UC Berkeley)](https://www.youtube.com/playlist?list=PL_iWQOsE6TfVYGEGiAOMaOzzv41Jfm_Ps)
+
+
 ## License and third‑party assets
 
 1. This repository's source code is licensed under Apache License 2.0 (see `LICENSE`).
