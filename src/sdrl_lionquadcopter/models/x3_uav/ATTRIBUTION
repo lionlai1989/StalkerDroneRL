@@ -1,0 +1,15 @@
+X3 UAV model (meshes, textures, SDF)
+
+Origin: Open Robotics – Gazebo Fuel
+Model page: https://app.gazebosim.org/OpenRobotics/fuel/models/X3%20UAV
+License: Creative Commons Attribution 4.0 International (CC-BY-4.0)
+Full license: https://creativecommons.org/licenses/by/4.0/
+
+Authors (per model.config):
+- Carlos Aguero <caguero@openrobotics.org>
+- Cole Biesemeyer <cole@openrobotics.org>
+
+Notes:
+- These assets are third-party and remain under CC-BY-4.0. Do not relicense.
+- Referenced as a nested model by lion_quadcopter.sdf.
+
