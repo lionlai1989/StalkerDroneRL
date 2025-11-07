@@ -1,7 +1,10 @@
 """
 Geometric Controller
 
-Pure algorithmic SE(3) controller.
+Pure algorithmic SE(3) controller inspired by:
+
+T. Lee, M. Leok, and N. H. McClamroch, "Geometric tracking control of a quadrotor
+UAV on SE(3)," Proceedings of the 49th IEEE Conference on Decision and Control (CDC), 2010.
 """
 
 import math
