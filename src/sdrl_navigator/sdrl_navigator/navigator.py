@@ -39,7 +39,6 @@ from sdrl_perception import (
     detect_red_ball,
     intersect_ray_with_plane_z,
 )
-from sdrl_rl_controller import SacController
 
 WORLD = "ground_plane_world"
 QUADCOPTER_MODEL = "lion_quadcopter"
@@ -322,6 +321,9 @@ class Navigator(Node):
             self.get_logger().info("Initializing geometric controller")
             self.controller = GeometricController()
         elif self.control_mode == "rl":
+            from sdrl_rl_controller import SacController
+
+            print("SacController not found. Do not use 'rl' control mode.")
             rl_model_path = Path("/home/lion/StalkerDroneRL/checkpoints/sac_quadcopter_final.zip")
             if not rl_model_path.exists():
                 self.get_logger().warning("RL model not found. Starting RL in training mode.")
