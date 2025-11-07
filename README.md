@@ -119,7 +119,7 @@ All materials used during development are recorded here.
 
 1. This repository's source code is licensed under Apache License 2.0 (see `LICENSE`).
 
-2. Third‑party model assets live under `src/sdrl_lionquadcopter/models/` and remain under their
+2. Third‑party model assets live under `src/sdrl_lionquadcopter/models/` remain under their
 original licenses. In particular, the nested `x3_uav` model originates from Open Robotics Gazebo
 Fuel (X3 UAV) and is typically provided under Creative Commons Attribution 4.0 (CC‑BY‑4.0).
 
