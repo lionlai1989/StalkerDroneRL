@@ -1,0 +1,37 @@
+{
+  "name": "StalkerDroneRL Dev Container",
+  "dockerComposeFile": [
+    "../docker-compose.yml"
+  ],
+  "service": "dev",
+  "workspaceFolder": "/home/lion/StalkerDroneRL",
+  "shutdownAction": "stopCompose",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "llvm-vs-code-extensions.vscode-clangd",
+        "ms-vscode.cmake-tools",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "ms-azuretools.vscode-docker",
+        "stkb.rewrap",
+        "ms-vscode.cpptools-themes"
+      ],
+      "settings": {
+        "terminal.integrated.shell.linux": "/bin/bash",
+        "C_Cpp.intelliSenseEngine": "Disabled",
+        "C_Cpp.errorSquiggles": "Disabled",
+        "clangd.path": "/usr/bin/clangd",
+        "clangd.arguments": [
+          "--compile-commands-dir=build",
+          "--background-index"
+        ],
+        "clangd.checkUpdates": false,
+        "rewrap.wrappingColumn": 100,
+        "rewrap.autoWrap.enabled": true
+      }
+    }
+  },
+  "remoteUser": "lion"
+}
