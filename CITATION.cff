@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use this project, please cite it as below."
+title: "The StalkerDroneRL Project"
+type: software
+authors:
+  - family-names: "Lai"
+    given-names: "Chih-An Lion"
+date-released: 2025-11-01
+version: 1.0.0
+license: Apache-2.0
+repository-code: "https://github.com/lionlai1989/StalkerDroneRL"
+url: "https://github.com/lionlai1989/StalkerDroneRL"
