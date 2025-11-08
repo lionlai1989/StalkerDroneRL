@@ -12,23 +12,74 @@ import math
 import numpy as np
 from geometry_msgs.msg import Pose, Twist
 
+GRAVITY = 9.81
+
+
+def rotation_error(rot_current, rot_desired):
+    rot_err = rot_desired.T @ rot_current - rot_current.T @ rot_desired
+    return np.array(
+        [
+            0.5 * (rot_err[2, 1] - rot_err[1, 2]),
+            0.5 * (rot_err[0, 2] - rot_err[2, 0]),
+            0.5 * (rot_err[1, 0] - rot_err[0, 1]),
+        ]
+    )
+
+
+def quaternion_to_rotation_matrix(q):
+    w, x, y, z = q
+    n = w * w + x * x + y * y + z * z
+    if n < 1e-9:
+        return np.eye(3)
+    s = 2.0 / n
+    wx = s * w * x
+    wy = s * w * y
+    wz = s * w * z
+    xx = s * x * x
+    xy = s * x * y
+    xz = s * x * z
+    yy = s * y * y
+    yz = s * y * z
+    zz = s * z * z
+    R = np.array(
+        [
+            [1 - (yy + zz), xy - wz, xz + wy],
+            [xy + wz, 1 - (xx + zz), yz - wx],
+            [xz - wy, yz + wx, 1 - (xx + yy)],
+        ]
+    )
+    return R
+
+
+def quaternion_to_euler_yaw(q):
+    w, x, y, z = q
+    siny = 2.0 * (w * z + x * y)
+    cosy = 1.0 - 2.0 * (y * y + z * z)
+    return math.atan2(siny, cosy)
+
 
 class GeometricController:
     def __init__(self):
-        # Control gains and limits (aligned with project defaults)
+        # Proportional gain on position error for position control
         self.kp_position = 3.0
+        # Derivative gain on linear velocity error for linear velocity control
         self.kv_linvel = 5.0
+        # Proportional gain on rotation matrix error for rotation matrix control
         self.kr_rotmat = 6.0
+        # Derivative gain on angular velocity error for angular velocity control
         self.kw_angvel = 3.0
-        self.max_accel = 12.0
-        self.max_tilt_angle = math.pi / 12  # ~15 degrees
 
-        # Physical and actuator parameters (must match SDF motor model)
+        # NOTE: Physical parameters defined here MUST match the values defined in
+        # "src/sdrl_lionquadcopter/models/lion_quadcopter.sdf".
+        # Mass of the drone (kg)
         self.mass = 1.5
         # Diagonal inertia [Ixx, Iyy, Izz]
         self.inertia = np.array([0.0347563, 0.07, 0.0977], dtype=float)
-        self.rotor_cf = 8.54858e-06  # thrust coefficient
-        self.rotor_cd = 0.016  # drag (moment) coefficient
+        # Thrust coefficient cf or motorConstant (N / (rad/s)^2)
+        self.rotor_cf = 8.54858e-06
+        # Drag coefficient cd or momentConstant (N*m / (rad/s)^2)
+        self.rotor_cd = 0.016
+        # Maximum rotor angular velocity (rad/s)
         self.motor_max_rot_velocity = 800.0
 
         # Geometry (lever arm = max rotor radius in XY plane)
@@ -43,11 +94,30 @@ class GeometricController:
             np.array([-L, -L, 0.0], dtype=float),
         ]
         # Rotor yaw spin directions (+1 for ccw, -1 for cw) in same order
-        self.yaw_signs = [1.0, 1.0, -1.0, -1.0]
+        self.yaw_signs = np.array([1.0, 1.0, -1.0, -1.0])
+
+        # max tilt angle for the drone (rad)
+        self.max_tilt_angle = math.pi / 12
+
+        # max acceleration for the drone (m/s^2)
+        self.max_accel = self.compute_max_accel()
+
+        assert self.max_accel > 0.0, "Max acceleration must be positive"
+        assert self.rotor_cf > 0.0, "rotor_cf must be positive"
+        assert self.rotor_cd > 0.0, "rotor_cd must be positive"
+        assert self.lever_arm > 0.0, "lever_arm must be positive"
+        assert self.motor_max_rot_velocity > 0.0, "motor_max_rot_velocity must be positive"
+
+    def compute_max_accel(self):
+        """Compute thrust-limited max acceleration magnitude (m/s^2).
+
+        F_max = 4 * rotor_cf * motor_max_rot_velocity^2
+        """
+        return 4.0 * self.rotor_cf * (self.motor_max_rot_velocity**2) / self.mass
 
     def compute_motor_speeds(
         self, curr_pose: Pose, curr_twist: Twist, desired_pose: Pose, desired_twist: Twist
-    ) -> list[float]:
+    ) -> np.ndarray:
         """Compute 4 motor speeds (rad/s) from current and desired states.
 
         Inputs:
@@ -56,97 +126,84 @@ class GeometricController:
         - desired_pose: geometry_msgs/Pose (desired world pose)
         - desired_twist: geometry_msgs/Twist (desired world linear vel, body angular vel)
 
-        All vectors are numpy arrays of shape (3,), quaternion is (w,x,y,z).
-        Linear velocities are in world frame; angular velocities are in body frame.
+        Pose:
+        - position: body frame movement in world frame
+        - orientation: body frame rotation in world frame
+
+        Twist:
+        - linear: linear velocities in world frame
+        - angular: angular velocities in body frame.
         """
-        # Current state
-        p = curr_pose.position
-        q = curr_pose.orientation
-        v = curr_twist.linear
-        w = curr_twist.angular
-        curr_pos = np.array([p.x, p.y, p.z], dtype=float)
-        curr_quat_wxyz = np.array([q.w, q.x, q.y, q.z], dtype=float)
-        curr_lin_vel = np.array([v.x, v.y, v.z], dtype=float)
-        curr_ang_vel_body = np.array([w.x, w.y, w.z], dtype=float)
-
-        # Desired state
-        dp = desired_pose.position
-        dq = desired_pose.orientation
-        des_pos = np.array([dp.x, dp.y, dp.z], dtype=float)
-        des_quat_wxyz = np.array([dq.w, dq.x, dq.y, dq.z], dtype=float)
-        des_yaw = float(self.quaternion_to_euler_yaw(des_quat_wxyz))
-        dv = desired_twist.linear
-        dw = desired_twist.angular
-        des_lin_vel = np.array([dv.x, dv.y, dv.z], dtype=float)
-        des_ang_vel_body = np.array([dw.x, dw.y, dw.z], dtype=float)
-
-        # --- Errors ---
-        e_p = curr_pos - des_pos
-        e_v = curr_lin_vel - des_lin_vel
-
-        gravity = np.array([0.0, 0.0, -9.81])
-
-        # Desired acceleration with PD control + gravity
-        a_des = -self.kp_position * e_p - self.kv_linvel * e_v - gravity
-        a_mag = float(np.linalg.norm(a_des))
-        if a_mag > self.max_accel and a_mag > 1e-6:
-            a_des = a_des * (self.max_accel / a_mag)
-
-        # Rotations
-        R_d = self.compute_desired_orientation(a_des, des_yaw)
-        R = self.quaternion_to_rotation_matrix(curr_quat_wxyz)
-
-        # Attitude error and angular rate error
-        e_R = self.compute_rotation_error(R, R_d)
-        des_omega_body = R.T.dot(R_d.dot(des_ang_vel_body))
-        e_omega = curr_ang_vel_body - des_omega_body
-
-        # Recompute a_cmd (without clamp) for thrust calculation
-        a_cmd = -self.kp_position * e_p - self.kv_linvel * e_v - gravity
-        body_z = R[:, 2]
-        f_total = self.mass * float(np.dot(a_cmd, body_z))
-        if f_total < 0.0:
-            f_total = 0.0
-
-        # Torques: -k_R e_R - k_w e_w + omega x I omega
-        tau = -self.kr_rotmat * e_R - self.kw_angvel * e_omega
-        I_omega = curr_ang_vel_body * self.inertia
-        tau += np.cross(curr_ang_vel_body, I_omega)
-
-        thrusts = self.mix_wrench_to_thrusts(f_total, tau)
-        return self.thrusts_to_motor_speeds(thrusts)
-
-    @staticmethod
-    def quaternion_to_rotation_matrix(q):
-        w, x, y, z = q
-        n = w * w + x * x + y * y + z * z
-        if n < 1e-9:
-            return np.eye(3)
-        s = 2.0 / n
-        wx = s * w * x
-        wy = s * w * y
-        wz = s * w * z
-        xx = s * x * x
-        xy = s * x * y
-        xz = s * x * z
-        yy = s * y * y
-        yz = s * y * z
-        zz = s * z * z
-        R = np.array(
-            [
-                [1 - (yy + zz), xy - wz, xz + wy],
-                [xy + wz, 1 - (xx + zz), yz - wx],
-                [xz - wy, yz + wx, 1 - (xx + yy)],
-            ]
+        curr_pos = np.array(
+            [curr_pose.position.x, curr_pose.position.y, curr_pose.position.z], dtype=float
         )
-        return R
+        curr_wxyz = np.array(
+            [
+                curr_pose.orientation.w,
+                curr_pose.orientation.x,
+                curr_pose.orientation.y,
+                curr_pose.orientation.z,
+            ],
+            dtype=float,
+        )
+        curr_linvel = np.array(
+            [curr_twist.linear.x, curr_twist.linear.y, curr_twist.linear.z], dtype=float
+        )
+        curr_angvel = np.array(
+            [curr_twist.angular.x, curr_twist.angular.y, curr_twist.angular.z], dtype=float
+        )
 
-    @staticmethod
-    def quaternion_to_euler_yaw(q):
-        w, x, y, z = q
-        siny = 2.0 * (w * z + x * y)
-        cosy = 1.0 - 2.0 * (y * y + z * z)
-        return math.atan2(siny, cosy)
+        des_pos = np.array(
+            [desired_pose.position.x, desired_pose.position.y, desired_pose.position.z], dtype=float
+        )
+        des_wxyz = np.array(
+            [
+                desired_pose.orientation.w,
+                desired_pose.orientation.x,
+                desired_pose.orientation.y,
+                desired_pose.orientation.z,
+            ],
+            dtype=float,
+        )
+        des_yaw = float(quaternion_to_euler_yaw(des_wxyz))
+        des_lin_vel = np.array(
+            [desired_twist.linear.x, desired_twist.linear.y, desired_twist.linear.z], dtype=float
+        )
+        des_angvel = np.array(
+            [desired_twist.angular.x, desired_twist.angular.y, desired_twist.angular.z], dtype=float
+        )
+
+        e_pos = curr_pos - des_pos
+        e_linvel = curr_linvel - des_lin_vel
+
+        # Compute force
+        curr_rot = quaternion_to_rotation_matrix(curr_wxyz)
+        # Control acceleration from PD control and gravity. Discard the desired acc.
+        acc_ctrl = (
+            -self.kp_position * e_pos
+            - self.kv_linvel * e_linvel
+            + GRAVITY * np.array([0.0, 0.0, 1.0])
+        )
+        body_z = curr_rot[:, 2]
+        force = self.mass * float(np.dot(acc_ctrl, body_z))
+        if force < 0.0:  # TODO: what would happen if force is negative?
+            force = 0.0
+
+        # Compute torque
+        acc_mag = np.linalg.norm(acc_ctrl)
+        if acc_mag > self.max_accel:
+            acc_ctrl = acc_ctrl * (self.max_accel / acc_mag)
+        disired_rot = self.compute_desired_orientation(acc_ctrl, des_yaw)
+        e_rot = rotation_error(curr_rot, disired_rot)
+        e_angvel = curr_angvel - curr_rot.T.dot(disired_rot.dot(des_angvel))
+        torque = (
+            -self.kr_rotmat * e_rot
+            - self.kw_angvel * e_angvel
+            + np.cross(curr_angvel, self.inertia * curr_angvel)
+        )
+
+        thrusts = self.wrench_to_thrusts(force, torque)
+        return self.thrusts_to_motor_speeds(thrusts)
 
     def compute_desired_orientation(self, acc, yaw):
         a = acc.copy()
@@ -177,59 +234,42 @@ class GeometricController:
         R_d = np.column_stack((x_w_des, y_w_des, z_w_des))
         return R_d
 
-    @staticmethod
-    def compute_rotation_error(R, R_d):
-        R_err = R_d.T.dot(R) - R.T.dot(R_d)
-        return np.array(
-            [
-                0.5 * (R_err[2, 1] - R_err[1, 2]),
-                0.5 * (R_err[0, 2] - R_err[2, 0]),
-                0.5 * (R_err[1, 0] - R_err[0, 1]),
-            ]
-        )
+    def wrench_to_thrusts(self, force, torque):
+        """
+        Map a desired wrench (force + torque) to individual rotor thrusts.
 
-    def mix_wrench_to_thrusts(self, total_thrust, torque):
-        if total_thrust < 0.0:
-            total_thrust = 0.0
-        tau_x, tau_y, tau_z = float(torque[0]), float(torque[1]), float(torque[2])
-        L = self.lever_arm
-        kf = self.rotor_cf
-        km = self.rotor_cd
-        c = (km / kf) if kf != 0 else 0.0
-
+        Inputs:
+        - force: desired force along body z-axis
+        - torque: desired torque in body frame
+        """
         # Sign of rotor positions
-        sx = [1.0 if p[0] >= 0 else -1.0 for p in self.rotor_positions]
-        sy = [1.0 if p[1] >= 0 else -1.0 for p in self.rotor_positions]
+        sx = np.array([1 if p[0] >= 0 else -1 for p in self.rotor_positions])
+        sy = np.array([1 if p[1] >= 0 else -1 for p in self.rotor_positions])
 
         # Start with equal thrust share
-        f = [0.25 * total_thrust] * 4
+        f = np.full(4, 0.25 * force)
 
-        # Roll (tau_x)
-        ax = (tau_x / (4.0 * L)) if L != 0 else 0.0
-        for i in range(4):
-            f[i] += ax * sy[i]
-        # Pitch (tau_y)
-        ay = (-tau_y / (4.0 * L)) if L != 0 else 0.0
-        for i in range(4):
-            f[i] += ay * sx[i]
-        # Yaw (tau_z)
-        az = (tau_z / (4.0 * c)) if c != 0 else 0.0
-        for i in range(4):
-            f[i] += az * self.yaw_signs[i]
+        # Roll
+        ax = torque[0] / (4.0 * self.lever_arm)
+        f += ax * sy
+
+        # Pitch
+        ay = -torque[1] / (4.0 * self.lever_arm)
+        f += ay * sx
+
+        # Yaw
+        c = self.rotor_cd / self.rotor_cf
+        az = torque[2] / (4.0 * c)
+        f += az * self.yaw_signs
 
         # Ensure non-negative thrust
-        for i in range(4):
-            if f[i] < 0.0:
-                f[i] = 0.0
+        f = np.clip(f, 0.0, None)
         return f
 
-    def thrusts_to_motor_speeds(self, thrusts):
-        if len(thrusts) != 4:
-            raise ValueError("Expected 4 thrust values")
-        speeds = []
-        for f in thrusts:
-            w = math.sqrt(f / self.rotor_cf) if self.rotor_cf > 0 else 0.0
-            if w > self.motor_max_rot_velocity:
-                w = self.motor_max_rot_velocity
-            speeds.append(w)
+    def thrusts_to_motor_speeds(self, thrusts: np.ndarray) -> np.ndarray:
+        """
+        Map individual rotor thrusts to motor speeds (rad/s).
+        """
+        speeds = np.sqrt(thrusts / self.rotor_cf)
+        speeds = np.clip(speeds, 0.0, self.motor_max_rot_velocity)
         return speeds

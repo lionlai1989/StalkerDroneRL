@@ -506,9 +506,9 @@ class Navigator(Node):
             self.latest_gt_odom.twist.twist,
             self.latest_desired_pose,
             self.latest_desired_twist,
-        )
+        ).tolist()
         msg = Float32MultiArray()
-        msg.data = [float(s) for s in motor_speeds]
+        msg.data = motor_speeds
         self.ros_motor_publisher.publish(msg)
 
     def reset_navigator(self):
