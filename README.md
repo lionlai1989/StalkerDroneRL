@@ -11,17 +11,17 @@
 
 - **ROS 2 Humble + Gazebo Harmonic** — uses recent, long-term support versions.
 
-- **Completely containerized environment** — I went through the *installation hell* of ROS 2 and
+- **Containerized environment** — I went through the *installation hell* of ROS 2 and
   Gazebo so you don't have to. During development, all you need is VS Code. For deployment, just run
   `docker compose up` and everything just works.
 
 - **Everything built from scratch** — all algorithms here are built from scratch, ranging from the geometric
-  controller (output low-level motor speed commands) to object detection. This is not a "just tune
+  controller (which output low-level motor speed commands) to object detection. This is not a "just tune
   some PID gains" project.
 
 - **Generic and modular** — the drone, camera, and sensor components come directly from [Open
   Robotics](https://www.openrobotics.org/). You can tweak parameters like mass, inertia, rotor
-  speeds, or the camera's FOV for your hardware platform.
+  speeds, camera FOV, etc., for your hardware platform.
 
 ---
 
@@ -68,7 +68,7 @@ docker compose build dev --no-cache
 docker compose up -d dev
 ```
 
-3. Log in to the container
+3. Exec into the container
 ```
 docker exec -it stalkerdronerl_dev bash
 ```
@@ -89,42 +89,42 @@ README.
 
 ## How to develop
 
-All development details are in `DEVELOP.md`.
+All development details are in [DEVELOP.md](DEVELOP.md).
 
-## Additional Resources
+---
 
-All materials used during development are recorded here.
+## References
+
+Materials used during development and recommended reading.
 
 ### ROS 2 Humble and Gazebo Harmonic
 - [ROS 2 Humble Documentation](https://docs.ros.org/en/humble/)
 - [Gazebo Harmonic Documentation](https://gazebosim.org/docs/harmonic/getstarted/)
 
-### Quadcopter Dynamics and Control
+### Quadcopter Navigation and Control
 - [Visual Navigation for Autonomous Vehicles (VNAV)](https://vnav.mit.edu/lectures.html)
-
+- [AA 203: Optimal and Learning-Based Control Course Notes — James Harrison](https://github.com/StanfordASL/AA203-Notes)
+- [Quadcopter Dynamics and Simulation - Andrew Gibiansky](https://andrew.gibiansky.com/blog/physics/quadcopter-dynamics/)
 - Multicopter Flight Control — Johannes Stephan
-
+- Small Unmanned Aircraft: Theory and Practice — Randal W. Beard and Timothy W. McLain
 - Quad Rotorcraft Control: Vision-Based Hovering and Navigation — Luis Rodolfo García Carrillo et al.
-
 - T. Lee, M. Leok, and N. H. McClamroch,
 “Geometric tracking control of a quadrotor UAV on SE(3),” IEEE CDC, 2010.
-
+- Quadrotor Dynamics and Control Rev 0.1 — Randal Beard
 - G. Tang, W. Sun, and K. Hauser,
 “Learning Trajectories for Real-Time Optimal Control of Quadrotors,” IROS, 2018.
-
 - E. Tal and S. Karaman,
 “Accurate Tracking of Aggressive Quadrotor Trajectories Using Incremental Nonlinear Dynamic Inversion and Differential Flatness,” IEEE T-CST, 2021.
 
 ### Deep Reinforcement Learning and Control
 - [CS 285: Deep Reinforcement Learning (UC Berkeley)](https://www.youtube.com/playlist?list=PL_iWQOsE6TfVYGEGiAOMaOzzv41Jfm_Ps)
 
+---
 
 ## License and third‑party assets
 
 1. This repository's source code is licensed under Apache License 2.0 (see `LICENSE`).
 
-2. Third‑party model assets live under `src/sdrl_lionquadcopter/models/` remain under their
+2. Third‑party model assets live under `src/sdrl_lionquadcopter/models/` and remain under their
 original licenses. In particular, the nested `x3_uav` model originates from Open Robotics Gazebo
 Fuel (X3 UAV) and is typically provided under Creative Commons Attribution 4.0 (CC‑BY‑4.0).
-
-3. The geometric controller implementation follows the method described in `T. Lee, M. Leok, and N. H. McClamroch, "Geometric tracking control of a quadrotor UAV on SE(3),"  IEEE CDC, 2010.`
