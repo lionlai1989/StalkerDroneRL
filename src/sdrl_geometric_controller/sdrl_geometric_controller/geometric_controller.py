@@ -193,17 +193,16 @@ class GeometricController:
         acc_mag = np.linalg.norm(acc_ctrl)
         if acc_mag > self.max_accel:
             acc_ctrl = acc_ctrl * (self.max_accel / acc_mag)
-        disired_rot = self.compute_desired_orientation(acc_ctrl, des_yaw)
-        e_rot = rotation_error(curr_rot, disired_rot)
-        e_angvel = curr_angvel - curr_rot.T.dot(disired_rot.dot(des_angvel))
+        desired_rot = self.compute_desired_orientation(acc_ctrl, des_yaw)
+        e_rot = rotation_error(curr_rot, desired_rot)
+        e_angvel = curr_angvel - curr_rot.T.dot(desired_rot.dot(des_angvel))
         torque = (
             -self.kr_rotmat * e_rot
             - self.kw_angvel * e_angvel
             + np.cross(curr_angvel, self.inertia * curr_angvel)
         )
 
-        thrusts = self.wrench_to_thrusts(force, torque)
-        return self.thrusts_to_motor_speeds(thrusts)
+        return self.wrench_to_motor_speeds(force, torque)
 
     def compute_desired_orientation(self, acc, yaw):
         a = acc.copy()
@@ -234,42 +233,30 @@ class GeometricController:
         R_d = np.column_stack((x_w_des, y_w_des, z_w_des))
         return R_d
 
-    def wrench_to_thrusts(self, force, torque):
+    def wrench_to_motor_speeds(self, force, torque):
         """
-        Map a desired wrench (force + torque) to individual rotor thrusts.
+        Map a desired wrench (force + torque) directly to motor angular velocities (rad/s).
 
-        Inputs:
-        - force: desired force along body z-axis
-        - torque: desired torque in body frame
+        We form a 4x4 allocation matrix `mat` such that:
+          [Fz, τx, τy, τz] = mat @ w
+        with w = [ω1*|ω1|, ω2*|ω2|, ω3*|ω3|, ω4*|ω4|]. In this system ω_i ≥ 0,
+        hence w_i = ω_i^2.
         """
-        # Sign of rotor positions
-        sx = np.array([1 if p[0] >= 0 else -1 for p in self.rotor_positions])
-        sy = np.array([1 if p[1] >= 0 else -1 for p in self.rotor_positions])
+        positions = np.array(self.rotor_positions)  # shape (4,3)
+        x = positions[:, 0]
+        y = positions[:, 1]
 
-        # Start with equal thrust share
-        f = np.full(4, 0.25 * force)
+        mat = np.vstack(
+            [
+                self.rotor_cf * np.ones(4),
+                self.rotor_cf * y,
+                -self.rotor_cf * x,
+                self.rotor_cd * self.yaw_signs,
+            ]
+        )
 
-        # Roll
-        ax = torque[0] / (4.0 * self.lever_arm)
-        f += ax * sy
-
-        # Pitch
-        ay = -torque[1] / (4.0 * self.lever_arm)
-        f += ay * sx
-
-        # Yaw
-        c = self.rotor_cd / self.rotor_cf
-        az = torque[2] / (4.0 * c)
-        f += az * self.yaw_signs
-
-        # Ensure non-negative thrust
-        f = np.clip(f, 0.0, None)
-        return f
-
-    def thrusts_to_motor_speeds(self, thrusts: np.ndarray) -> np.ndarray:
-        """
-        Map individual rotor thrusts to motor speeds (rad/s).
-        """
-        speeds = np.sqrt(thrusts / self.rotor_cf)
-        speeds = np.clip(speeds, 0.0, self.motor_max_rot_velocity)
-        return speeds
+        wrench = np.array([force, torque[0], torque[1], torque[2]], dtype=float)
+        w = np.linalg.pinv(mat) @ wrench
+        w = np.clip(w, 0.0, None)
+        speeds = np.sqrt(w)
+        return np.clip(speeds, 0.0, self.motor_max_rot_velocity)
