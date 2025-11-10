@@ -538,11 +538,6 @@ void LionQuadcopter::load_drone_config(const std::shared_ptr<const sdf::Element>
     // Moment of inertia matrix about body axes
     gz::math::Matrix3d inertia;
 
-    // Geometric controller gains (with default values)
-
-    int yaw_sign[4] = {+1, +1, -1, -1}; // Yaw direction signs per rotor index (ccw:+1, cw:-1)
-    double lever_arm = 0;               // Lever arm in meters(distance along +X and +Y to rotor)
-
     // Store 4 rotor poses. rotor_0, rotor_1, rotor_2, rotor_3.
     std::vector<gz::math::Pose3d> rotor_poses(4);
 
@@ -622,22 +617,7 @@ void LionQuadcopter::load_drone_config(const std::shared_ptr<const sdf::Element>
     assert(rotor_poses[3].Pos().X() < 0);
     assert(rotor_poses[3].Pos().Y() < 0);
 
-    // Compute lever arm from rotor poses (max radius in xy-plane)
-    auto rxy = [](const gz::math::Vector3d &v) { return std::sqrt(v.X() * v.X() + v.Y() * v.Y()); };
-    double l0 = rxy(rotor_poses[0].Pos());
-    double l1 = rxy(rotor_poses[1].Pos());
-    double l2 = rxy(rotor_poses[2].Pos());
-    double l3 = rxy(rotor_poses[3].Pos());
-    lever_arm = std::max(std::max(l0, l1), std::max(l2, l3));
-
-    assert(std::abs(lever_arm - 0.255539) < 1e-6); // 0.255539 is the lever arm of the drone
-    assert(std::abs(mass - 1.5) < 1e-6);           // 1.5 kg is the mass of the drone
-
-    // Set rotor configuration
-    std::vector<int> yaw_signs;
-    for (int i = 0; i < 4; ++i) {
-        yaw_signs.push_back(yaw_sign[i]);
-    }
+    assert(std::abs(mass - 1.5) < 1e-6); // 1.5 kg is the mass of the drone
 }
 
 } // namespace sdrl

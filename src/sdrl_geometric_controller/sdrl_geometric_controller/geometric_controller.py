@@ -1,8 +1,6 @@
 """
 Geometric Controller
 
-Pure algorithmic SE(3) controller inspired by:
-
 T. Lee, M. Leok, and N. H. McClamroch, "Geometric tracking control of a quadrotor
 UAV on SE(3)," Proceedings of the 49th IEEE Conference on Decision and Control (CDC), 2010.
 """
@@ -70,7 +68,8 @@ class GeometricController:
         self.kw_angvel = 3.0
 
         # NOTE: Physical parameters defined here MUST match the values defined in
-        # "src/sdrl_lionquadcopter/models/lion_quadcopter.sdf".
+        # "src/sdrl_lionquadcopter/models/lion_quadcopter.sdf"
+        # "src/sdrl_lionquadcopter/models/x3_uav/model.sdf"
         # Mass of the drone (kg)
         self.mass = 1.5
         # Diagonal inertia [Ixx, Iyy, Izz]
@@ -81,20 +80,17 @@ class GeometricController:
         self.rotor_cd = 0.016
         # Maximum rotor angular velocity (rad/s)
         self.motor_max_rot_velocity = 800.0
-
-        # Geometry (lever arm = max rotor radius in XY plane)
-        self.lever_arm = 0.255539
-        # Rotor positions (x,y,z) in body frame on diagonals, order:
-        #   rotor_0: +x, -y; rotor_1: -x, +y; rotor_2: +x, +y; rotor_3: -x, -y
-        L = self.lever_arm / math.sqrt(2.0)
-        self.rotor_positions = [
-            np.array([+L, -L, 0.0], dtype=float),
-            np.array([-L, +L, 0.0], dtype=float),
-            np.array([+L, +L, 0.0], dtype=float),
-            np.array([-L, -L, 0.0], dtype=float),
-        ]
-        # Rotor yaw spin directions (+1 for ccw, -1 for cw) in same order
-        self.yaw_signs = np.array([1.0, 1.0, -1.0, -1.0])
+        # Rotor positions (x, y, z) in body frame. All rotations are identity matrix.
+        self.rotor_positions = np.array(
+            [
+                [0.13, -0.22, 0.023],
+                [-0.13, 0.2, 0.023],
+                [0.13, 0.22, 0.023],
+                [-0.13, -0.2, 0.023],
+            ]
+        )
+        # Rotor yaw torque directions (+1 for ccw, -1 for cw)
+        self.yaw_signs = np.array([+1, +1, -1, -1])
 
         # max tilt angle for the drone (rad)
         self.max_tilt_angle = math.pi / 12
@@ -105,7 +101,6 @@ class GeometricController:
         assert self.max_accel > 0.0, "Max acceleration must be positive"
         assert self.rotor_cf > 0.0, "rotor_cf must be positive"
         assert self.rotor_cd > 0.0, "rotor_cd must be positive"
-        assert self.lever_arm > 0.0, "lever_arm must be positive"
         assert self.motor_max_rot_velocity > 0.0, "motor_max_rot_velocity must be positive"
 
     def compute_max_accel(self):
@@ -178,15 +173,14 @@ class GeometricController:
 
         # Compute force
         curr_rot = quaternion_to_rotation_matrix(curr_wxyz)
-        # Control acceleration from PD control and gravity. Discard the desired acc.
         acc_ctrl = (
             -self.kp_position * e_pos
             - self.kv_linvel * e_linvel
             + GRAVITY * np.array([0.0, 0.0, 1.0])
-        )
+        )  # Control acceleration from PD control and gravity. Discard the desired acc.
         body_z = curr_rot[:, 2]
         force = self.mass * float(np.dot(acc_ctrl, body_z))
-        if force < 0.0:  # TODO: what would happen if force is negative?
+        if force < 0.0:  # NOTE: what would happen if force is negative?
             force = 0.0
 
         # Compute torque
