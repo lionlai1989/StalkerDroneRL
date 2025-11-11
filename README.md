@@ -104,7 +104,7 @@ Materials used during development and recommended reading.
 ### Quadcopter Navigation and Control
 - [Visual Navigation for Autonomous Vehicles (VNAV)](https://vnav.mit.edu/lectures.html)
 - [AA 203: Optimal and Learning-Based Control Course Notes — James Harrison](https://github.com/StanfordASL/AA203-Notes)
-- [Quadcopter Dynamics and Simulation - Andrew Gibiansky](https://andrew.gibiansky.com/blog/physics/quadcopter-dynamics/)
+- [Quadcopter Dynamics and Simulation — Andrew Gibiansky](https://andrew.gibiansky.com/blog/physics/quadcopter-dynamics/)
 - Multicopter Flight Control — Johannes Stephan
 - Small Unmanned Aircraft: Theory and Practice — Randal W. Beard and Timothy W. McLain
 - Quad Rotorcraft Control: Vision-Based Hovering and Navigation — Luis Rodolfo García Carrillo et al.
@@ -121,10 +121,21 @@ Materials used during development and recommended reading.
 
 ---
 
+## How to cite
+
+Use GitHub's “Cite this repository” button on the repository page to get BibTeX, APA, or EndNote entries generated from `CITATION.cff`.
+
+For quick copy, an example one‑line BibTeX is:
+```bibtex
+@software{StalkerDroneRL, author={Lai, Chih-An Lion}, title={The StalkerDroneRL Project}, year={2025}, version={1.0.0}, url={https://github.com/lionlai1989/StalkerDroneRL}}
+```
+
+---
+
 ## License and third‑party assets
 
 1. This repository's source code is licensed under Apache License 2.0 (see `LICENSE`).
 
-2. Third‑party model assets live under `src/sdrl_lionquadcopter/models/` and remain under their
+2. Third‑party model assets live under `src/sdrl_lionquadcopter/models/` remain under their
 original licenses. In particular, the nested `x3_uav` model originates from Open Robotics Gazebo
 Fuel (X3 UAV) and is typically provided under Creative Commons Attribution 4.0 (CC‑BY‑4.0).
