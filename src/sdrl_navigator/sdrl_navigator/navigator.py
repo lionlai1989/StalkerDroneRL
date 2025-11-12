@@ -153,89 +153,6 @@ class NaviStateMachine:
 
         raise ValueError(f"Invalid state: {self.state}")
 
-    def compute_desired_pose_twist(
-        self,
-        gt_odom: Odometry,
-        desired_odom: Optional[Odometry],
-        ball_pos3d,
-    ) -> Tuple[Optional[Pose], Optional[Twist]]:
-        """Compute desired Pose and Twist for the current state.
-
-        Returns a tuple (Pose, Twist); returns (None, None) if no command should be sent.
-        """
-        if gt_odom is None:
-            return None, None
-
-        if self.state == "LANDED":
-            # Stay at the current pose
-            pose = Pose()
-            pose.position.x = gt_odom.pose.pose.position.x
-            pose.position.y = gt_odom.pose.pose.position.y
-            pose.position.z = gt_odom.pose.pose.position.z
-            pose.orientation.x = gt_odom.pose.pose.orientation.x
-            pose.orientation.y = gt_odom.pose.pose.orientation.y
-            pose.orientation.z = gt_odom.pose.pose.orientation.z
-            pose.orientation.w = gt_odom.pose.pose.orientation.w
-            twist = Twist()
-            twist.linear.x = 0.0
-            twist.linear.y = 0.0
-            twist.linear.z = 0.0
-            twist.angular.x = 0.0
-            twist.angular.y = 0.0
-            twist.angular.z = 0.0
-            return pose, twist
-
-        if self.state == "TAKINGOFF":
-            pose = Pose()
-            pose.position.x = self.takeoff_target[0]
-            pose.position.y = self.takeoff_target[1]
-            pose.position.z = self.takeoff_target[2]
-            pose.orientation.x = 0.0
-            pose.orientation.y = 0.0
-            pose.orientation.z = 0.0
-            pose.orientation.w = 1.0
-            twist = Twist()
-            twist.linear.x = 0.0
-            twist.linear.y = 0.0
-            twist.linear.z = 0.0
-            twist.angular.x = 0.0
-            twist.angular.y = 0.0
-            twist.angular.z = 0.0
-            return pose, twist
-
-        if self.state == "FLYING":
-            yaw = yaw_from_odom(gt_odom)
-            qx, qy, qz, qw = rpy_to_quat(0.0, 0.0, yaw)
-            pose = Pose()
-            if ball_pos3d is None:  # No ball detected
-                if desired_odom is not None:  # Stay at desired xy
-                    pose.position.x = desired_odom.pose.pose.position.x
-                    pose.position.y = desired_odom.pose.pose.position.y
-                else:  # Stay at ground truth xy
-                    pose.position.x = gt_odom.pose.pose.position.x
-                    pose.position.y = gt_odom.pose.pose.position.y
-            else:  # ball detected
-                pose.position.x = ball_pos3d[0]
-                pose.position.y = ball_pos3d[1]
-            pose.position.z = self.cruising_altitude  # hold cruising altitude
-            pose.orientation.x = qx
-            pose.orientation.y = qy
-            pose.orientation.z = qz
-            pose.orientation.w = qw
-            twist = Twist()
-            twist.linear.x = 0.0
-            twist.linear.y = 0.0
-            twist.linear.z = 0.0
-            twist.angular.x = 0.0
-            twist.angular.y = 0.0
-            twist.angular.z = 0.0
-            return pose, twist
-
-        if self.state == "CRASHED":
-            return None, None
-
-        raise ValueError(f"Invalid state: {self.state}")
-
 
 class Navigator(Node):
     def __init__(self):
@@ -256,7 +173,7 @@ class Navigator(Node):
 
         self.camera_info_subscription = self.create_subscription(
             CameraInfo, "/X3/ros_bottom_cam/camera_info", self.camera_info_callback, qos_reliable
-        )  # camera_info is only published once when the drone is spawned.
+        )
 
         self.gt_odom_subscription = self.create_subscription(
             Odometry, "/X3/gt_odom", self.gt_odom_callback, qos_best_effort
@@ -284,9 +201,11 @@ class Navigator(Node):
         self.exact_sync.registerCallback(self.synced_image_pose_callback)
 
         # Navigation state machine
+        self.cruising_altitude = 5.0
+        self.takeoff_target = np.array([0.0, 0.0, self.cruising_altitude])
         self.navi_sm = NaviStateMachine(
-            takeoff_target=(0.0, 0.0, 5.0),
-            cruising_altitude=5.0,
+            takeoff_target=self.takeoff_target,
+            cruising_altitude=self.cruising_altitude,
             cruising_tolerance=0.5,
             crashed_height=0.5,
             crashed_tilt_angle=np.pi / 4,  # 45 degrees
@@ -325,7 +244,6 @@ class Navigator(Node):
         elif self.control_mode == "rl":
             from sdrl_rl_controller import SacController
 
-            print("SacController not found. Do not use 'rl' control mode.")
             rl_model_path = Path("/home/lion/StalkerDroneRL/checkpoints/sac_quadcopter_final.zip")
             if not rl_model_path.exists():
                 self.get_logger().warning("RL model not found. Starting RL in training mode.")
@@ -373,6 +291,90 @@ class Navigator(Node):
         self.latest_ball_position = intersect_ray_with_plane_z(ray, z_height)
         # self.get_logger().info(f"latest_ball_position: {self.latest_ball_position}")
 
+    def compute_desired_pose_twist(
+        self,
+        state: str,
+    ) -> Tuple[Optional[Pose], Optional[Twist]]:
+        """Compute desired Pose and Twist for the current state.
+
+        Returns a tuple (Pose, Twist); returns (None, None) if no command should be sent.
+
+        TODO: where should this function be placed? consider trajectory optimization will be added
+        in this file.
+        """
+        if self.latest_gt_odom is None:
+            return None, None
+
+        if state == "LANDED":
+            # Stay at the current pose
+            pose = Pose()
+            pose.position.x = self.latest_gt_odom.pose.pose.position.x
+            pose.position.y = self.latest_gt_odom.pose.pose.position.y
+            pose.position.z = self.latest_gt_odom.pose.pose.position.z
+            pose.orientation.x = self.latest_gt_odom.pose.pose.orientation.x
+            pose.orientation.y = self.latest_gt_odom.pose.pose.orientation.y
+            pose.orientation.z = self.latest_gt_odom.pose.pose.orientation.z
+            pose.orientation.w = self.latest_gt_odom.pose.pose.orientation.w
+            twist = Twist()
+            twist.linear.x = 0.0
+            twist.linear.y = 0.0
+            twist.linear.z = 0.0
+            twist.angular.x = 0.0
+            twist.angular.y = 0.0
+            twist.angular.z = 0.0
+            return pose, twist
+
+        if state == "TAKINGOFF":
+            pose = Pose()
+            pose.position.x = self.takeoff_target[0]
+            pose.position.y = self.takeoff_target[1]
+            pose.position.z = self.takeoff_target[2]
+            pose.orientation.x = 0.0
+            pose.orientation.y = 0.0
+            pose.orientation.z = 0.0
+            pose.orientation.w = 1.0
+            twist = Twist()
+            twist.linear.x = 0.0
+            twist.linear.y = 0.0
+            twist.linear.z = 0.0
+            twist.angular.x = 0.0
+            twist.angular.y = 0.0
+            twist.angular.z = 0.0
+            return pose, twist
+
+        if state == "FLYING":
+            yaw = yaw_from_odom(self.latest_gt_odom)
+            qx, qy, qz, qw = rpy_to_quat(0.0, 0.0, yaw)
+            pose = Pose()
+            if self.latest_ball_position is None:  # No ball detected
+                if self.latest_desired_odom is not None:  # Stay at desired xy
+                    pose.position.x = self.latest_desired_odom.pose.pose.position.x
+                    pose.position.y = self.latest_desired_odom.pose.pose.position.y
+                else:  # Stay at ground truth xy
+                    pose.position.x = self.latest_gt_odom.pose.pose.position.x
+                    pose.position.y = self.latest_gt_odom.pose.pose.position.y
+            else:  # ball detected
+                pose.position.x = self.latest_ball_position[0]
+                pose.position.y = self.latest_ball_position[1]
+            pose.position.z = self.cruising_altitude  # hold cruising altitude
+            pose.orientation.x = qx
+            pose.orientation.y = qy
+            pose.orientation.z = qz
+            pose.orientation.w = qw
+            twist = Twist()
+            twist.linear.x = 0.0
+            twist.linear.y = 0.0
+            twist.linear.z = 0.0
+            twist.angular.x = 0.0
+            twist.angular.y = 0.0
+            twist.angular.z = 0.0
+            return pose, twist
+
+        if state == "CRASHED":
+            return None, None
+
+        raise ValueError(f"Invalid state: {state}")
+
     def state_machine_step(self):
         """High-level state machine executed periodically."""
         # Always publish current state, even if odometry is not yet available
@@ -392,8 +394,8 @@ class Navigator(Node):
         if prev_state != self.navi_sm.state:
             self.get_logger().info(f"navi state: {prev_state} -> {self.navi_sm.state}")
 
-        desired_pose, desired_twist = self.navi_sm.compute_desired_pose_twist(
-            self.latest_gt_odom, self.latest_desired_odom, self.latest_ball_position
+        desired_pose, desired_twist = self.compute_desired_pose_twist(
+            state=self.navi_sm.state,
         )
         if desired_pose is None or desired_twist is None:
             return
