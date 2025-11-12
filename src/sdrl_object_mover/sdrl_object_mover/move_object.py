@@ -1,10 +1,9 @@
 import math
 import subprocess
 
+import numpy as np
 import rclpy
 from rclpy.node import Node
-
-import numpy as np
 
 
 class ObjectMover(Node):

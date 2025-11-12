@@ -12,10 +12,12 @@ During the RL training, if the episode is terminated or truncated, the `train_sa
 the Navigator to reset the drone to its initial pose and clear the internal state.
 """
 
+import math
 import time
 import traceback
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import rclpy
