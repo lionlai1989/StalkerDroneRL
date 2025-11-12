@@ -227,8 +227,54 @@ class GeometricController:
         R_d = np.column_stack((x_w_des, y_w_des, z_w_des))
         return R_d
 
-    def wrench_to_motor_speeds(self, force, torque):
+    def wrench_to_motor_speeds(self, force: float, torque: np.ndarray) -> np.ndarray:
         """
+        Map a desired wrench (force + torque) to rotor speeds using the
+        sign-based lever-arm mixing approach.
+        """
+
+        # Initialize thrusts equally (baseline total force)
+        thrusts = np.full(4, 0.25 * force, dtype=float)
+
+        # Roll and pitch distribution using sign-based lever arms
+        x = self.rotor_positions[:, 0]
+        y = self.rotor_positions[:, 1]
+        sx = np.where(x >= 0.0, 1.0, -1.0)
+        sy = np.where(y >= 0.0, 1.0, -1.0)
+        # lever arm length from geometry
+        arm_len = np.mean(np.hypot(x, y))
+        assert arm_len > 0.0, "Lever arm length must be positive"
+
+        # Roll: delta_f_i = (torque_x / (4 * lever_arm)) * sy_i
+        ax = torque[0] / (4.0 * arm_len)
+        thrusts += ax * sy
+
+        # Pitch: delta_f_i = (-torque_y / (4 * lever_arm)) * sx_i
+        ay = -torque[1] / (4.0 * arm_len)
+        thrusts += ay * sx
+
+        # Yaw: delta_f_i = (torque_z/(4c)) * yaw_sign_i
+        c = self.rotor_cd / self.rotor_cf
+        assert c > 0.0, "c must be positive"
+        az = torque[2] / (4.0 * c)
+        thrusts += az * self.yaw_signs
+
+        # Ensure non-negative thrust
+        thrusts = np.clip(thrusts, 0.0, None)
+
+        # Convert thrust to motor speeds
+        speeds = np.sqrt(thrusts / self.rotor_cf)
+        return np.clip(speeds, 0.0, self.motor_max_rot_velocity)
+
+    def wrench_to_motor_speeds_problematic(self, force: float, torque: np.ndarray) -> np.ndarray:
+        """
+        Keep this function for educational purposes.
+        The pseudoinverse solution `w = np.linalg.pinv(mat) @ wrench` gives a least-squares solution
+        to the linear system relating the desired force and torques [Fz, τx, τy, τz] to the squared
+        motor speeds `w = ω²`. Physically, a motor cannot spin at a negative speed, so `w_i = ω_i^2 ≥
+        0`. If the pseudoinverse returns negative entries, clipping them to zero introduces a
+        deviation from the requested wrench.
+
         Map a desired wrench (force + torque) directly to motor angular velocities (rad/s).
 
         We form a 4x4 allocation matrix `mat` such that:
@@ -236,9 +282,8 @@ class GeometricController:
         with w = [ω1*|ω1|, ω2*|ω2|, ω3*|ω3|, ω4*|ω4|]. In this system ω_i ≥ 0,
         hence w_i = ω_i^2.
         """
-        positions = np.array(self.rotor_positions)  # shape (4,3)
-        x = positions[:, 0]
-        y = positions[:, 1]
+        x = self.rotor_positions[:, 0]
+        y = self.rotor_positions[:, 1]
 
         mat = np.vstack(
             [
