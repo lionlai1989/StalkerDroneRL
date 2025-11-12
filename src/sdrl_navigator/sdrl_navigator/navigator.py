@@ -12,7 +12,6 @@ During the RL training, if the episode is terminated or truncated, the `train_sa
 the Navigator to reset the drone to its initial pose and clear the internal state.
 """
 
-import subprocess
 import time
 import traceback
 from pathlib import Path
@@ -20,7 +19,6 @@ from typing import Optional, Tuple
 
 import numpy as np
 import rclpy
-from ament_index_python.packages import get_package_share_directory
 from cv_bridge import CvBridge
 from geometry_msgs.msg import Pose, PoseStamped, Twist
 from message_filters import Subscriber, TimeSynchronizer
@@ -115,8 +113,6 @@ class NaviStateMachine:
         self.cruising_tolerance = cruising_tolerance
         self.crashed_height = crashed_height
         self.crashed_tilt_angle = crashed_tilt_angle
-        self.last_desired_pose: Optional[Pose] = None
-        self.last_desired_twist: Optional[Twist] = None
 
     def update_state(self, odom: Odometry) -> None:
         """Advance the internal state based on observations. No command output here."""
@@ -159,24 +155,41 @@ class NaviStateMachine:
 
     def compute_desired_pose_twist(
         self,
-        odom: Odometry,
+        gt_odom: Odometry,
+        desired_odom: Optional[Odometry],
         ball_pos3d,
     ) -> Tuple[Optional[Pose], Optional[Twist]]:
         """Compute desired Pose and Twist for the current state.
 
         Returns a tuple (Pose, Twist); returns (None, None) if no command should be sent.
         """
-        if odom is None:
+        if gt_odom is None:
             return None, None
 
         if self.state == "LANDED":
-            return None, None
+            # Stay at the current pose
+            pose = Pose()
+            pose.position.x = gt_odom.pose.pose.position.x
+            pose.position.y = gt_odom.pose.pose.position.y
+            pose.position.z = gt_odom.pose.pose.position.z
+            pose.orientation.x = gt_odom.pose.pose.orientation.x
+            pose.orientation.y = gt_odom.pose.pose.orientation.y
+            pose.orientation.z = gt_odom.pose.pose.orientation.z
+            pose.orientation.w = gt_odom.pose.pose.orientation.w
+            twist = Twist()
+            twist.linear.x = 0.0
+            twist.linear.y = 0.0
+            twist.linear.z = 0.0
+            twist.angular.x = 0.0
+            twist.angular.y = 0.0
+            twist.angular.z = 0.0
+            return pose, twist
 
         if self.state == "TAKINGOFF":
             pose = Pose()
-            pose.position.x = float(self.takeoff_target[0])
-            pose.position.y = float(self.takeoff_target[1])
-            pose.position.z = float(self.takeoff_target[2])
+            pose.position.x = self.takeoff_target[0]
+            pose.position.y = self.takeoff_target[1]
+            pose.position.z = self.takeoff_target[2]
             pose.orientation.x = 0.0
             pose.orientation.y = 0.0
             pose.orientation.z = 0.0
@@ -188,34 +201,27 @@ class NaviStateMachine:
             twist.angular.x = 0.0
             twist.angular.y = 0.0
             twist.angular.z = 0.0
-
-            # Update last desired pose and twist
-            self.last_desired_pose = pose
-            self.last_desired_twist = twist
-
             return pose, twist
 
         if self.state == "FLYING":
-            yaw = yaw_from_odom(odom)
+            yaw = yaw_from_odom(gt_odom)
             qx, qy, qz, qw = rpy_to_quat(0.0, 0.0, yaw)
             pose = Pose()
             if ball_pos3d is None:  # No ball detected
-                # Stay at last commanded xy, hold cruising altitude
-                if self.last_desired_pose is not None:
-                    pose.position.x = float(self.last_desired_pose.position.x)
-                    pose.position.y = float(self.last_desired_pose.position.y)
-                else:
-                    pose.position.x = float(odom.pose.pose.position.x)
-                    pose.position.y = float(odom.pose.pose.position.y)
-                pose.position.z = float(self.cruising_altitude)
+                if desired_odom is not None:  # Stay at desired xy
+                    pose.position.x = desired_odom.pose.pose.position.x
+                    pose.position.y = desired_odom.pose.pose.position.y
+                else:  # Stay at ground truth xy
+                    pose.position.x = gt_odom.pose.pose.position.x
+                    pose.position.y = gt_odom.pose.pose.position.y
             else:  # ball detected
-                pose.position.x = float(ball_pos3d[0])
-                pose.position.y = float(ball_pos3d[1])
-                pose.position.z = float(self.cruising_altitude)
-            pose.orientation.x = float(qx)
-            pose.orientation.y = float(qy)
-            pose.orientation.z = float(qz)
-            pose.orientation.w = float(qw)
+                pose.position.x = ball_pos3d[0]
+                pose.position.y = ball_pos3d[1]
+            pose.position.z = self.cruising_altitude  # hold cruising altitude
+            pose.orientation.x = qx
+            pose.orientation.y = qy
+            pose.orientation.z = qz
+            pose.orientation.w = qw
             twist = Twist()
             twist.linear.x = 0.0
             twist.linear.y = 0.0
@@ -223,11 +229,6 @@ class NaviStateMachine:
             twist.angular.x = 0.0
             twist.angular.y = 0.0
             twist.angular.z = 0.0
-
-            # update last desired pose and twist
-            self.last_desired_pose = pose
-            self.last_desired_twist = twist
-
             return pose, twist
 
         if self.state == "CRASHED":
@@ -304,8 +305,9 @@ class Navigator(Node):
         # Latest ground truth odometry
         self.latest_gt_odom = None
 
-        self.latest_desired_pose = None
-        self.latest_desired_twist = None
+        # Latest desired odometry to store timestamped pose and twist.
+        # Should initialize to None or default Odometry()? And update pose and twist later?
+        self.latest_desired_odom: Optional[Odometry] = None
 
         self.reset_navigator()
 
@@ -390,28 +392,24 @@ class Navigator(Node):
         if prev_state != self.navi_sm.state:
             self.get_logger().info(f"navi state: {prev_state} -> {self.navi_sm.state}")
 
-        self.latest_desired_pose, self.latest_desired_twist = (
-            self.navi_sm.compute_desired_pose_twist(self.latest_gt_odom, self.latest_ball_position)
+        desired_pose, desired_twist = self.navi_sm.compute_desired_pose_twist(
+            self.latest_gt_odom, self.latest_desired_odom, self.latest_ball_position
         )
-
-        if self.navi_sm.state == "CRASHED":
+        if desired_pose is None or desired_twist is None:
             return
-
-        if self.latest_desired_pose is None or self.latest_desired_twist is None:
-            return
-
-        # Publish desired Odometry command using Pose/Twist
-        self.publish_cmd_odom(self.latest_desired_pose, self.latest_desired_twist)
-
-    def publish_cmd_odom(self, pose: Pose, twist: Twist):
-        """Publish desired odometry using provided Pose and Twist."""
         odom = Odometry()
         odom.header.stamp = self.get_clock().now().to_msg()
         odom.header.frame_id = "/X3/odom"
         odom.child_frame_id = "/X3/base_footprint"
-        odom.pose.pose = pose
-        odom.twist.twist = twist
-        self.cmd_odom_publisher.publish(odom)
+        odom.pose.pose = desired_pose
+        odom.twist.twist = desired_twist
+        self.latest_desired_odom = odom
+
+        if self.navi_sm.state == "CRASHED":
+            return
+
+        # Publish latest desired Odometry command
+        self.cmd_odom_publisher.publish(self.latest_desired_odom)
 
     def handle_reset_service(self, request, response):
         """Handle reset_drone_initial_pose service requests.
@@ -467,7 +465,7 @@ class Navigator(Node):
         try:
             gz_client.world_control(WORLD, pause=False, timeout_ms=10000)
         except Exception as exc:
-            self.get_logger().warn(f"world_control(unpause) failed before set_pose: {exc}")
+            self.get_logger().warning(f"world_control(unpause) failed before set_pose: {exc}")
             raise exc
 
         x, y, z = INITIAL_POSE
@@ -489,7 +487,7 @@ class Navigator(Node):
                 )
                 break
             except Exception as exc:
-                self.get_logger().warn(f"set_pose attempt {attempt} failed: {exc}")
+                self.get_logger().warning(f"set_pose attempt {attempt} failed: {exc}")
                 time.sleep(0.3)
 
     def controller_step(self):
@@ -498,14 +496,14 @@ class Navigator(Node):
             return
         if self.latest_gt_odom is None:
             return
-        if self.latest_desired_pose is None:
+        if self.latest_desired_odom is None:
             return
 
         motor_speeds = self.controller.compute_motor_speeds(
             self.latest_gt_odom.pose.pose,
             self.latest_gt_odom.twist.twist,
-            self.latest_desired_pose,
-            self.latest_desired_twist,
+            self.latest_desired_odom.pose.pose,
+            self.latest_desired_odom.twist.twist,
         ).tolist()
         msg = Float32MultiArray()
         msg.data = motor_speeds
@@ -520,6 +518,7 @@ class Navigator(Node):
         self.latest_cam_pose = None
         self.latest_ball_position = None
         self.latest_gt_odom = None
+        self.latest_desired_odom = None
 
     def camera_info_callback(self, msg: CameraInfo):
         """Callback for camera info messages"""
