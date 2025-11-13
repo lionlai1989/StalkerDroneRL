@@ -283,6 +283,10 @@ class Navigator(Node):
         # Should initialize to None or default Odometry()? And update pose and twist later?
         self.latest_desired_odom: Optional[Odometry] = None
 
+        # Smoothed commanded lateral velocities in flying state
+        self.flying_linvel_x: float = 0.0
+        self.flying_linvel_y: float = 0.0
+
         self.reset_navigator()
 
         # Timer to drive the high-level state machine
@@ -397,7 +401,11 @@ class Navigator(Node):
             twist = Twist()
             twist.linear.x = 0.0
             twist.linear.y = 0.0
-            twist.linear.z = 0.0
+            # Vertical feedforward velocity toward target altitude (saturated)
+            z_err = self.takeoff_target[2] - self.latest_gt_odom.pose.pose.position.z
+            k_vz = 0.3  # gain to tune
+            vz_max = 1.0  # maximum vertical velocity (m/s)
+            twist.linear.z = np.clip(k_vz * z_err, -vz_max, vz_max)
             twist.angular.x = 0.0
             twist.angular.y = 0.0
             twist.angular.z = 0.0
@@ -423,8 +431,9 @@ class Navigator(Node):
             pose.orientation.z = qz
             pose.orientation.w = qw
             twist = Twist()
-            twist.linear.x = 0.0
-            twist.linear.y = 0.0
+            self.compute_lateral_feedforward()
+            twist.linear.x = self.flying_linvel_x
+            twist.linear.y = self.flying_linvel_y
             twist.linear.z = 0.0
             twist.angular.x = 0.0
             twist.angular.y = 0.0
@@ -435,6 +444,56 @@ class Navigator(Node):
             return None, None
 
         raise ValueError(f"Invalid state: {state}")
+
+    def compute_lateral_feedforward(self) -> None:
+        """Compute smoothed, clamped, slew-limited lateral feedforward velocity from ball velocity.
+        Updates self.cmd_linvel_x and self.cmd_linvel_y.
+        """
+        # exponential moving average (EMA) factor for smoothing
+        alpha = 0.1
+        # feedforward gain
+        k_ff = 0.1
+        # speed clamp
+        v_max = 0.5  # m/s
+        # deadband to suppress minor jitter
+        deadband = 0.1  # m/s
+        # slew-rate limit (acceleration cap)
+        a_max = 1.0  # m/s^2
+
+        if self.latest_ball_state.detected and self.latest_ball_state.curr_vel is not None:
+            target_vx = k_ff * self.latest_ball_state.curr_vel[0]
+            target_vy = k_ff * self.latest_ball_state.curr_vel[1]
+            if abs(target_vx) < deadband:
+                target_vx = 0.0
+            if abs(target_vy) < deadband:
+                target_vy = 0.0
+        else:
+            target_vx = 0.0
+            target_vy = 0.0
+
+        # EMA smoothing toward target
+        smoothed_vx = alpha * target_vx + (1.0 - alpha) * self.flying_linvel_x
+        smoothed_vy = alpha * target_vy + (1.0 - alpha) * self.flying_linvel_y
+        # Clamp speed
+        smoothed_vx = np.clip(smoothed_vx, -v_max, v_max)
+        smoothed_vy = np.clip(smoothed_vy, -v_max, v_max)
+        # Slew-rate limit (acceleration cap)
+        dvx = float(
+            np.clip(
+                smoothed_vx - self.flying_linvel_x,
+                -a_max * self.navi_state_timer_period,
+                a_max * self.navi_state_timer_period,
+            )
+        )
+        dvy = float(
+            np.clip(
+                smoothed_vy - self.flying_linvel_y,
+                -a_max * self.navi_state_timer_period,
+                a_max * self.navi_state_timer_period,
+            )
+        )
+        self.flying_linvel_x = self.flying_linvel_x + dvx
+        self.flying_linvel_y = self.flying_linvel_y + dvy
 
     def state_machine_step(self):
         """High-level state machine executed periodically."""
@@ -582,6 +641,8 @@ class Navigator(Node):
         self.latest_ball_state.reset()
         self.latest_gt_odom = None
         self.latest_desired_odom = None
+        self.flying_linvel_x = 0.0
+        self.flying_linvel_y = 0.0
 
     def camera_info_callback(self, msg: CameraInfo):
         """Callback for camera info messages"""
