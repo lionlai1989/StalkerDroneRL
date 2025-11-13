@@ -86,6 +86,59 @@ def rpy_to_quat(roll: float, pitch: float, yaw: float):
     return (qx, qy, qz, qw)
 
 
+class BallState:
+    """
+    Keep track of the current and previous 3D position and velocity of the ball.
+    """
+
+    def __init__(self):
+        self.curr_pos: np.ndarray | None = None
+        self.curr_vel: np.ndarray | None = None
+        self.curr_time_s: float | None = None
+        self.prev_pos: np.ndarray | None = None
+        self.prev_vel: np.ndarray | None = None
+        self.prev_time_s: float | None = None
+        self.detected: bool = False
+
+    def update(self, pos: np.ndarray, time_s: float) -> None:
+        self.detected = True
+
+        # Initialize on first observation
+        if self.curr_pos is None or self.curr_time_s is None:
+            self.curr_pos = pos
+            self.curr_time_s = time_s
+            self.curr_vel = np.zeros_like(pos, dtype=float)
+            self.prev_pos = pos
+            self.prev_time_s = time_s
+            self.prev_vel = np.zeros_like(pos, dtype=float)
+            return
+
+        # Require strictly increasing timestamps
+        assert time_s > self.curr_time_s, "BallState.update requires strictly increasing time"
+
+        # Shift current state to previous
+        self.prev_pos = self.curr_pos
+        self.prev_time_s = self.curr_time_s
+        self.prev_vel = self.curr_vel
+
+        # Compute new current state
+        dt = time_s - self.prev_time_s
+        vel = (pos - self.prev_pos) / dt
+        self.curr_pos = pos
+        self.curr_time_s = time_s
+        self.curr_vel = vel
+
+    def reset(self) -> None:
+        """Reset the ball state to initial values."""
+        self.curr_pos = None
+        self.curr_vel = None
+        self.curr_time_s = None
+        self.prev_pos = None
+        self.prev_vel = None
+        self.prev_time_s = None
+        self.detected = False
+
+
 class NaviStateMachine:
     """Navigation state machine for the drone.
     there are 4 states:
@@ -221,7 +274,7 @@ class Navigator(Node):
         self.latest_cam_pose = None
 
         # Latest 3D ball position in world frame
-        self.latest_ball_position = None
+        self.latest_ball_state = BallState()
 
         # Latest ground truth odometry
         self.latest_gt_odom = None
@@ -280,7 +333,7 @@ class Navigator(Node):
         # Detect ball and cache world position if possible
         red_point = detect_red_ball(self.latest_image)
         if red_point is None:
-            self.latest_ball_position = None
+            self.latest_ball_state.detected = False
             return
 
         # Compute intrinsics
@@ -290,8 +343,14 @@ class Navigator(Node):
         ray = compute_ray_from_pixel(red_point, self.latest_cam_pose, fx, fy, cx, cy)
         assert ray is not None, "ray cannot be None"
         z_height = 0.15  # ball radius (0.15m)
-        self.latest_ball_position = intersect_ray_with_plane_z(ray, z_height)
-        # self.get_logger().info(f"latest_ball_position: {self.latest_ball_position}")
+        ball_position = intersect_ray_with_plane_z(ray, z_height)
+        if ball_position is None:
+            self.latest_ball_state.detected = False
+            return
+        # Use synchronized message timestamp for monotonicity with sensor data.
+        # Time Representation: seconds + nanoseconds
+        time_s = float(pose_msg.header.stamp.sec) + float(pose_msg.header.stamp.nanosec) * 1e-9
+        self.latest_ball_state.update(ball_position, time_s)
 
     def compute_desired_pose_twist(
         self,
@@ -348,7 +407,7 @@ class Navigator(Node):
             yaw = yaw_from_odom(self.latest_gt_odom)
             qx, qy, qz, qw = rpy_to_quat(0.0, 0.0, yaw)
             pose = Pose()
-            if self.latest_ball_position is None:  # No ball detected
+            if self.latest_ball_state.detected is False:  # No ball detected
                 if self.latest_desired_odom is not None:  # Stay at desired xy
                     pose.position.x = self.latest_desired_odom.pose.pose.position.x
                     pose.position.y = self.latest_desired_odom.pose.pose.position.y
@@ -356,8 +415,8 @@ class Navigator(Node):
                     pose.position.x = self.latest_gt_odom.pose.pose.position.x
                     pose.position.y = self.latest_gt_odom.pose.pose.position.y
             else:  # ball detected
-                pose.position.x = self.latest_ball_position[0]
-                pose.position.y = self.latest_ball_position[1]
+                pose.position.x = self.latest_ball_state.curr_pos[0]
+                pose.position.y = self.latest_ball_state.curr_pos[1]
             pose.position.z = self.cruising_altitude  # hold cruising altitude
             pose.orientation.x = qx
             pose.orientation.y = qy
@@ -520,7 +579,7 @@ class Navigator(Node):
         self.navi_sm.state = "LANDED"
         self.latest_image = None
         self.latest_cam_pose = None
-        self.latest_ball_position = None
+        self.latest_ball_state.reset()
         self.latest_gt_odom = None
         self.latest_desired_odom = None
 
