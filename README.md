@@ -108,13 +108,10 @@ Materials used during development and recommended reading.
 - Multicopter Flight Control — Johannes Stephan
 - Small Unmanned Aircraft: Theory and Practice — Randal W. Beard and Timothy W. McLain
 - Quad Rotorcraft Control: Vision-Based Hovering and Navigation — Luis Rodolfo García Carrillo et al.
-- T. Lee, M. Leok, and N. H. McClamroch,
-“Geometric tracking control of a quadrotor UAV on SE(3),” IEEE CDC, 2010.
 - Quadrotor Dynamics and Control Rev 0.1 — Randal Beard
-- G. Tang, W. Sun, and K. Hauser,
-“Learning Trajectories for Real-Time Optimal Control of Quadrotors,” IROS, 2018.
-- E. Tal and S. Karaman,
-“Accurate Tracking of Aggressive Quadrotor Trajectories Using Incremental Nonlinear Dynamic Inversion and Differential Flatness,” IEEE T-CST, 2021.
+- R. Mahony, V. Kumar and P. Corke, "Multirotor Aerial Vehicles: Modeling, Estimation, and Control of Quadrotor," in IEEE Robotics & Automation Magazine, vol. 19, no. 3, pp. 20-32, Sept. 2012, doi: 10.1109/MRA.2012.2206474.
+- T. Lee, M. Leok and N. H. McClamroch, "Geometric tracking control of a quadrotor UAV on SE(3)," 49th IEEE Conference on Decision and Control (CDC), Atlanta, GA, USA, 2010, pp. 5420-5425, doi: 10.1109/CDC.2010.5717652.
+- E. Tal and S. Karaman, "Accurate Tracking of Aggressive Quadrotor Trajectories Using Incremental Nonlinear Dynamic Inversion and Differential Flatness," in IEEE Transactions on Control Systems Technology, vol. 29, no. 3, pp. 1203-1218, May 2021, doi: 10.1109/TCST.2020.3001117.
 
 ### Deep Reinforcement Learning and Control
 - [CS 285: Deep Reinforcement Learning (UC Berkeley)](https://www.youtube.com/playlist?list=PL_iWQOsE6TfVYGEGiAOMaOzzv41Jfm_Ps)
