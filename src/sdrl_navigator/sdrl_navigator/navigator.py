@@ -363,9 +363,6 @@ class Navigator(Node):
         """Compute desired Pose and Twist for the current state.
 
         Returns a tuple (Pose, Twist); returns (None, None) if no command should be sent.
-
-        TODO: where should this function be placed? consider trajectory optimization will be added
-        in this file.
         """
         if self.latest_gt_odom is None:
             return None, None
