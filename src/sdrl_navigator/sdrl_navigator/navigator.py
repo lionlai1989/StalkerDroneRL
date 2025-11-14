@@ -240,7 +240,7 @@ class Navigator(Node):
             Odometry, "/X3/gt_odom", self.gt_odom_callback, qos_best_effort
         )
 
-        self.cmd_odom_publisher = self.create_publisher(Odometry, "/X3/cmd_odom", qos_best_effort)
+        self.cmd_odom_publisher = self.create_publisher(Odometry, "/X3/cmd_odom", qos_reliable)
         self.ros_motor_publisher = self.create_publisher(
             Float32MultiArray, "/X3/ros/motor_speed", qos_reliable
         )

@@ -286,7 +286,7 @@ void LionQuadcopter::init_ros_subscribers(std::string cmd_odom_topic,
     assert(!cmd_odom_topic.empty());
 
     this->cmd_odom_subscriber = this->ros_node->create_subscription<nav_msgs::msg::Odometry>(
-        cmd_odom_topic, rclcpp::QoS(rclcpp::KeepLast(32)).best_effort(),
+        cmd_odom_topic, rclcpp::QoS(rclcpp::KeepLast(32)).reliable(),
         std::bind(&LionQuadcopter::cb_cmd_odom, this, std::placeholders::_1));
 
     this->ros_motor_subscriber =
