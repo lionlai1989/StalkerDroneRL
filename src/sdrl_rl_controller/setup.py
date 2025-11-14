@@ -27,6 +27,8 @@ setup(
     entry_points={
         "console_scripts": [
             "train_sac = sdrl_rl_controller.train_sac:main",
+            "train_imitation = sdrl_rl_controller.train_imitation:main",
+            "evaluate_controllers = sdrl_rl_controller.evaluate_controllers:main",
         ],
     },
 )

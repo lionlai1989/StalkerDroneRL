@@ -115,6 +115,10 @@ Materials used during development and recommended reading.
 
 ### Deep Reinforcement Learning and Control
 - [CS 285: Deep Reinforcement Learning (UC Berkeley)](https://www.youtube.com/playlist?list=PL_iWQOsE6TfVYGEGiAOMaOzzv41Jfm_Ps)
+- https://github.com/QuadCtrl/quad-ctrl
+- https://github.com/simondlevy/gym-copter
+- https://rpg.ifi.uzh.ch/research_drone_racing.html
+- "Reinforcement Learning Based Quadcopter Controller.pdf"
 
 ---
 
