@@ -10,14 +10,20 @@ publish them to the /X3/ros/motor_speed topic.
 
 During the RL training, if the episode is terminated or truncated, the `train_sac.py` will request
 the Navigator to reset the drone to its initial pose and clear the internal state.
+
+There are many timer-based callback functions. I list some of them here:
+- state_machine_step: 4 Hz to update the state machine and compute the command odometry
+- synced_image_pose_callback: 10 Hz to detect the ball and update the ball state
+- controller_step: 100 Hz to compute the motor speeds
+
+Here, I don't think state_machine_step should run as fast as synced_image_pose_callback. 4 Hz should
+be enough to update the state machine and the command odometry.
 """
 
-import math
 import time
 import traceback
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 import rclpy
@@ -290,7 +296,7 @@ class Navigator(Node):
         self.reset_navigator()
 
         # Timer to drive the high-level state machine
-        self.navi_state_timer_period = 1 / 10.0  # 10 Hz
+        self.navi_state_timer_period = 1 / 4.0  # 4 Hz
         self.navi_state_timer = self.create_timer(
             self.navi_state_timer_period, self.state_machine_step
         )
