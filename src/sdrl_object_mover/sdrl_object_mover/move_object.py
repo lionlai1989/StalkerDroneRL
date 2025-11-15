@@ -21,6 +21,10 @@ class ObjectMover(Node):
         self.declare_parameter("speed", 0.0)
         self.declare_parameter("trajectory", "circle")  # "circle" or "random"
 
+        # When use_sim_time is true, this clock uses simulation time from /clock topic
+        # When use_sim_time is false, this clock uses wall-clock time.
+        self.clock = self.get_clock()
+
         self.entity_name: str = self.get_parameter("entity_name").get_parameter_value().string_value
         self.world_name: str = self.get_parameter("world_name").get_parameter_value().string_value
         self.center_x: float = self.get_parameter("center_x").get_parameter_value().double_value
@@ -49,7 +53,7 @@ class ObjectMover(Node):
         # Gazebo topic to command velocity
         self.cmd_topic = f"/model/{self.entity_name}/cmd_vel"
 
-        self.timer = self.create_timer(3.0, self.update)  # (seconds)
+        self.timer = self.create_timer(3.0, self.update, clock=self.clock)  # (seconds)
 
     def update(self):
         if self.trajectory == "circle":

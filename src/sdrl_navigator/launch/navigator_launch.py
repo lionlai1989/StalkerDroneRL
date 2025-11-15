@@ -9,7 +9,12 @@ def generate_launch_description() -> LaunchDescription:
         executable="navigator",
         name="navigator",
         output="screen",
-        parameters=[{"control_mode": LaunchConfiguration("control_mode")}],
+        parameters=[
+            {
+                "control_mode": LaunchConfiguration("control_mode"),
+                "use_sim_time": LaunchConfiguration("use_sim_time"),
+            }
+        ],
     )
 
     return LaunchDescription([navigator_node])

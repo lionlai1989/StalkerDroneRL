@@ -126,7 +126,7 @@
       <sensor name="downward_camera" type="camera">
         <always_on>true</always_on>
         <visualize>true</visualize>
-        <update_rate>10</update_rate> <!-- (Hz) -->
+        <update_rate>3</update_rate> <!-- (Hz) -->
         <topic>/X3/gz_bottom_cam/image_raw</topic>
         <camera name="downward_cam">
           <horizontal_fov>1.5</horizontal_fov>

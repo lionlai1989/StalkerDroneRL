@@ -17,6 +17,8 @@
   <depend>imu_tools</depend>
   <depend>robot_state_publisher</depend>
   <depend>joint_state_publisher</depend>
+  <depend>ros_gz_bridge</depend>
+  <depend>rosgraph_msgs</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

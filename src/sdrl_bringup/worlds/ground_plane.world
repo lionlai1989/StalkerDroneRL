@@ -1,9 +1,13 @@
 <?xml version="1.0"?>
 <sdf version="1.7">
   <world name="ground_plane_world">
-    <physics name="1ms" type="ignored"> <!-- Should be name="default_physics" type="ode"? -->
-      <max_step_size>0.001</max_step_size>
+    <physics name="1ms" type="ignored"> <!-- Gazebo uses the DART physics engine by default. -->
+      <!-- real_time_factor = max_step_size x real_time_update_rate
+      If real_time_update_rate is set to 0 the simulation will run as fast as it can. Gazebo is now
+      responsible to run a clock server that publishes to the /clock topic. -->
+      <max_step_size>0.001</max_step_size> <!-- 1ms -->
       <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate> 
     </physics>
 
     <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>

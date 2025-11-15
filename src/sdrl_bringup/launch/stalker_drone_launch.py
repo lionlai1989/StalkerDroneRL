@@ -90,15 +90,15 @@ def generate_launch_description():
         ),
     ]
 
-    # Gazebo simulation with GUI
+    # Gazebo simulation with GUI and run it unpaused immediately
     gazebo_gui = ExecuteProcess(
-        cmd=["gz", "sim", LaunchConfiguration("world")],
+        cmd=["gz", "sim", "-r", LaunchConfiguration("world")],
         output="screen",
         condition=IfCondition(LaunchConfiguration("use_gui")),
     )
-    # Gazebo simulation without GUI (headless mode)
+    # Gazebo simulation without GUI and run it unpaused immediately
     gazebo_headless = ExecuteProcess(
-        cmd=["gz", "sim", "-s", LaunchConfiguration("world")],
+        cmd=["gz", "sim", "-r", "-s", LaunchConfiguration("world")],
         output="screen",
         condition=UnlessCondition(LaunchConfiguration("use_gui")),
     )
@@ -134,6 +134,7 @@ def generate_launch_description():
         launch_arguments={
             "speed": LaunchConfiguration("ball_speed"),
             "trajectory": LaunchConfiguration("ball_trajectory"),
+            "use_sim_time": LaunchConfiguration("use_sim_time"),
         }.items(),
     )
 
@@ -162,6 +163,7 @@ def generate_launch_description():
             f"{model_ns}/odom",
         ],
         output="screen",
+        parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
     )
 
     # RViz node
@@ -186,6 +188,7 @@ def generate_launch_description():
         ),
         launch_arguments={
             "control_mode": LaunchConfiguration("control_mode"),
+            "use_sim_time": LaunchConfiguration("use_sim_time"),
         }.items(),
     )
 
@@ -219,6 +222,7 @@ def generate_launch_description():
     )
 
     # Auto-start simulation by unpausing the gz sim (applies to both GUI and headless)
+    # NOTE: No longer needed since we start Gazebo with the -r flag (unpaused)
     unpause_world = ExecuteProcess(
         cmd=[
             "gz",
@@ -237,7 +241,29 @@ def generate_launch_description():
         output="screen",
     )
 
+    # Bridge Gazebo simulation clock to ROS 2 /clock.
+    # Syntax for parameter_bridge argument:
+    # - /TOPIC_NAME@ROS_MSG_TYPE[GZ_MSG_TYPE
+    # - The first '@' separates the topic name from the type specification. Immediately after '@'
+    #   comes the ROS message type.
+    # - The ROS type is followed by one of '@', '[', or ']' to indicate direction:
+    #     '@'  -> bidirectional bridge (ROS <-> Gazebo)
+    #     '['  -> Gazebo -> ROS (subscribe in Gazebo, publish to ROS)
+    #     ']'  -> ROS -> Gazebo (subscribe in ROS, publish to Gazebo)
+    # Remap the Gazebo clock topic name to the standard ROS 2 /clock topic.
+    # ROS 2's use_sim_time mechanism always listens on /clock, so this makes
+    # all nodes that set use_sim_time:=true automatically follow Gazebo time
+    # without hard-coding the Gazebo world-specific topic name.
+    clock_bridge = Node(
+        package="ros_gz_bridge",
+        executable="parameter_bridge",
+        arguments=["/world/ground_plane_world/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock"],
+        remappings=[("/world/ground_plane_world/clock", "/clock")],
+        output="screen",
+    )
+
     # Deterministic startup ordering via timers. It does not ensure the readiness of the services.
+    # TimerAction is part of the ROS 2 launch system, not a ROS node. Thus, it uses wall-clock time.
     delayed_spawn_ball = TimerAction(period=1.5, actions=[spawn_ball])
     delayed_mover = TimerAction(period=2.0, actions=[mover_launch])
     delayed_tf_publisher = TimerAction(period=2.5, actions=[tf_publisher])
@@ -269,6 +295,6 @@ def generate_launch_description():
             delayed_rviz_node,
             delayed_navigator_launch,
             delayed_spawn_drone,
-            delayed_unpause_world,
+            clock_bridge,
         ]
     )

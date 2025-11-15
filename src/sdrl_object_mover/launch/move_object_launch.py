@@ -18,6 +18,7 @@ def generate_launch_description() -> LaunchDescription:
         "trajectory": DeclareLaunchArgument(
             "trajectory", default_value="circle", choices=["circle", "random"]
         ),
+        "use_sim_time": DeclareLaunchArgument("use_sim_time", default_value="true"),
     }
 
     params = {name: LaunchConfiguration(name) for name in args.keys()}

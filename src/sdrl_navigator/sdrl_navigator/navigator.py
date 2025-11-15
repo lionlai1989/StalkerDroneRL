@@ -12,15 +12,14 @@ During the RL training, if the episode is terminated or truncated, the `train_sa
 the Navigator to reset the drone to its initial pose and clear the internal state.
 
 There are many timer-based callback functions. I list some of them here:
-- state_machine_step: 4 Hz to update the state machine and compute the command odometry
-- synced_image_pose_callback: 10 Hz to detect the ball and update the ball state
+- state_machine_step: 2 Hz to update the state machine and compute the command odometry
+- synced_image_pose_callback: 3 Hz to detect the ball and update the ball state
 - controller_step: 100 Hz to compute the motor speeds
 
 Here, I don't think state_machine_step should run as fast as synced_image_pose_callback. 4 Hz should
 be enough to update the state machine and the command odometry.
 """
 
-import time
 import traceback
 from pathlib import Path
 from typing import Optional, Tuple
@@ -164,14 +163,14 @@ class NaviStateMachine:
         self,
         takeoff_target: Tuple[float, float, float],
         cruising_altitude: float,
-        cruising_tolerance: float,
+        max_altitude: float,
         crashed_height: float,
         crashed_tilt_angle: float,
     ):
         self.state = "LANDED"
         self.takeoff_target = np.array(takeoff_target)  # (3,)
         self.cruising_altitude = cruising_altitude
-        self.cruising_tolerance = cruising_tolerance
+        self.max_altitude = max_altitude
         self.crashed_height = crashed_height
         self.crashed_tilt_angle = crashed_tilt_angle
 
@@ -193,9 +192,12 @@ class NaviStateMachine:
             if rpy_to_tilt_angle(*quat_to_rpy(curr_quat)) > self.crashed_tilt_angle:
                 self.state = "CRASHED"
                 return
+            if curr_pos.z > self.max_altitude:
+                self.state = "CRASHED"
+                return
 
             # Check if the drone has reached the cruising altitude
-            if abs(curr_pos.z - self.cruising_altitude) < self.cruising_tolerance:
+            if abs(curr_pos.z - self.cruising_altitude) < 0.5:
                 self.state = "FLYING"
             return
 
@@ -205,6 +207,9 @@ class NaviStateMachine:
                 self.state = "CRASHED"
                 return
             if rpy_to_tilt_angle(*quat_to_rpy(curr_quat)) > self.crashed_tilt_angle:
+                self.state = "CRASHED"
+                return
+            if curr_pos.z > self.max_altitude:
                 self.state = "CRASHED"
                 return
             return
@@ -222,6 +227,10 @@ class Navigator(Node):
         # `control_mode` SHALL NOT be changed after initialization.
         self.declare_parameter("control_mode", "geometric")  # "geometric" or "rl"
         self.control_mode = self.get_parameter("control_mode").get_parameter_value().string_value
+
+        # When use_sim_time is true, this clock uses simulation time from /clock topic
+        # When use_sim_time is false, this clock uses wall-clock time.
+        self.clock = self.get_clock()
 
         self.cv_bridge = CvBridge()  # Create CV bridge for image conversion
 
@@ -263,11 +272,12 @@ class Navigator(Node):
 
         # Navigation state machine
         self.cruising_altitude = 5.0
+        self.max_altitude = 1.5 * self.cruising_altitude
         self.takeoff_target = np.array([0.0, 0.0, self.cruising_altitude])
         self.navi_sm = NaviStateMachine(
             takeoff_target=self.takeoff_target,
             cruising_altitude=self.cruising_altitude,
-            cruising_tolerance=0.5,
+            max_altitude=self.max_altitude,
             crashed_height=0.5,
             crashed_tilt_angle=np.pi / 4,  # 45 degrees
         )
@@ -296,9 +306,9 @@ class Navigator(Node):
         self.reset_navigator()
 
         # Timer to drive the high-level state machine
-        self.navi_state_timer_period = 1 / 4.0  # 4 Hz
+        self.navi_state_timer_period = 1 / 2.0  # 2 Hz
         self.navi_state_timer = self.create_timer(
-            self.navi_state_timer_period, self.state_machine_step
+            self.navi_state_timer_period, self.state_machine_step, clock=self.clock
         )
 
         # Controller operating at motor level.
@@ -321,7 +331,7 @@ class Navigator(Node):
 
         self.controller_timer_period = 1 / 100.0  # 100 Hz
         self.controller_timer = self.create_timer(
-            self.controller_timer_period, self.controller_step
+            self.controller_timer_period, self.controller_step, clock=self.clock
         )
 
     def gt_odom_callback(self, msg: Odometry):
@@ -517,6 +527,9 @@ class Navigator(Node):
         if prev_state != self.navi_sm.state:
             self.get_logger().info(f"navi state: {prev_state} -> {self.navi_sm.state}")
 
+        if self.navi_sm.state == "CRASHED":
+            return
+
         desired_pose, desired_twist = self.compute_desired_pose_twist(
             state=self.navi_sm.state,
         )
@@ -529,9 +542,6 @@ class Navigator(Node):
         odom.pose.pose = desired_pose
         odom.twist.twist = desired_twist
         self.latest_desired_odom = odom
-
-        if self.navi_sm.state == "CRASHED":
-            return
 
         # Publish latest desired Odometry command
         self.cmd_odom_publisher.publish(self.latest_desired_odom)
@@ -565,7 +575,7 @@ class Navigator(Node):
             if self.navi_state_timer is None:
                 # self.get_logger().info("Restarting state machine timer")
                 self.navi_state_timer = self.create_timer(
-                    self.navi_state_timer_period, self.state_machine_step
+                    self.navi_state_timer_period, self.state_machine_step, clock=self.clock
                 )
         return response
 
@@ -583,15 +593,14 @@ class Navigator(Node):
         zero_msg.data = [0.0, 0.0, 0.0, 0.0]
         for _ in range(3):
             self.ros_motor_publisher.publish(zero_msg)
-            time.sleep(0.05)
 
         # Use persistent Gazebo Transport client (no subprocess) and retry until success
         # Ensure world is unpaused so the request is processed promptly
-        try:
-            gz_client.world_control(WORLD, pause=False, timeout_ms=10000)
-        except Exception as exc:
-            self.get_logger().warning(f"world_control(unpause) failed before set_pose: {exc}")
-            raise exc
+        # try:
+        #     gz_client.world_control(WORLD, pause=False, timeout_ms=10000)
+        # except Exception as exc:
+        #     self.get_logger().warning(f"world_control(unpause) failed before set_pose: {exc}")
+        #     raise exc
 
         x, y, z = INITIAL_POSE
         attempt = 0
@@ -601,9 +610,9 @@ class Navigator(Node):
                 gz_client.set_pose(
                     WORLD,
                     QUADCOPTER_MODEL,
-                    x=float(x),
-                    y=float(y),
-                    z=float(z),
+                    x=x,
+                    y=y,
+                    z=z,
                     qw=1.0,
                     qx=0.0,
                     qy=0.0,
@@ -613,7 +622,7 @@ class Navigator(Node):
                 break
             except Exception as exc:
                 self.get_logger().warning(f"set_pose attempt {attempt} failed: {exc}")
-                time.sleep(0.3)
+                # time.sleep(0.01)
 
     def controller_step(self):
         """Low-level control loop: compute motor speeds and publish to /X3/ros/motor_speed."""

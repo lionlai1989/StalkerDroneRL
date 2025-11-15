@@ -3,10 +3,6 @@ that often fail with: "NodeShared::RecvSrvRequest() error sending response: Host
 See: https://github.com/gazebosim/gz-transport/issues/564
 """
 
-import subprocess
-import time
-from pathlib import Path
-
 try:
     # Preferred (unversioned) imports if available
     import gz.transport as gz_transport
@@ -66,58 +62,58 @@ def set_pose(
 ) -> None:
     req = Pose()
     req.name = model
-    req.position.x = float(x)
-    req.position.y = float(y)
-    req.position.z = float(z)
-    req.orientation.w = float(qw)
-    req.orientation.x = float(qx)
-    req.orientation.y = float(qy)
-    req.orientation.z = float(qz)
+    req.position.x = x
+    req.position.y = y
+    req.position.z = z
+    req.orientation.w = qw
+    req.orientation.x = qx
+    req.orientation.y = qy
+    req.orientation.z = qz
     if not _request(f"/world/{world}/set_pose", req, timeout_ms):
         raise RuntimeError("set_pose failed")
 
 
-def respawn_drone():
-    """Remove lion_quadcopter model from the world and respawn it.
-    Do not use this. Repositioning the drone to initial pose is better."""
-    remove_cmd = [
-        "gz",
-        "service",
-        "-s",
-        "/world/ground_plane_world/remove",
-        "--reqtype",
-        "gz.msgs.Entity",
-        "--reptype",
-        "gz.msgs.Boolean",
-        "--timeout",
-        "3000",
-        "--req",
-        'name: "lion_quadcopter" type: MODEL',
-    ]
-    rc1 = subprocess.run(remove_cmd, check=False, capture_output=True, text=True)
-    if rc1.returncode != 0:
-        raise RuntimeError(f"Remove drone failed (code {rc1.returncode}): {rc1.stderr}")
+# def respawn_drone():
+#     """Remove lion_quadcopter model from the world and respawn it.
+#     Do not use this. Repositioning the drone to initial pose is better."""
+#     remove_cmd = [
+#         "gz",
+#         "service",
+#         "-s",
+#         "/world/ground_plane_world/remove",
+#         "--reqtype",
+#         "gz.msgs.Entity",
+#         "--reptype",
+#         "gz.msgs.Boolean",
+#         "--timeout",
+#         "3000",
+#         "--req",
+#         'name: "lion_quadcopter" type: MODEL',
+#     ]
+#     rc1 = subprocess.run(remove_cmd, check=False, capture_output=True, text=True)
+#     if rc1.returncode != 0:
+#         raise RuntimeError(f"Remove drone failed (code {rc1.returncode}): {rc1.stderr}")
 
-    time.sleep(0.2)  # gives Gazebo a moment to fully tear down the model/plugins.
+#     time.sleep(0.2)  # gives Gazebo a moment to fully tear down the model/plugins.
 
-    lion_sdf_path = Path("models") / "lion_quadcopter.sdf"
-    lion_sdf_pose = (
-        "pose: { position: { x: 0, y: 0, z: 0 }, orientation: { x: 0, y: 0, z: 0, w: 1 } }"
-    )
-    spawn_cmd = [
-        "gz",
-        "service",
-        "-s",
-        "/world/ground_plane_world/create",
-        "--reqtype",
-        "gz.msgs.EntityFactory",
-        "--reptype",
-        "gz.msgs.Boolean",
-        "--timeout",
-        "3000",
-        "--req",
-        f'sdf_filename: "{lion_sdf_path}" name: "lion_quadcopter" {lion_sdf_pose}',
-    ]
-    rc2 = subprocess.run(spawn_cmd, check=False, capture_output=True, text=True)
-    if rc2.returncode != 0:
-        raise RuntimeError(f"Spawn drone failed (code {rc2.returncode}): {rc2.stderr}")
+#     lion_sdf_path = Path("models") / "lion_quadcopter.sdf"
+#     lion_sdf_pose = (
+#         "pose: { position: { x: 0, y: 0, z: 0 }, orientation: { x: 0, y: 0, z: 0, w: 1 } }"
+#     )
+#     spawn_cmd = [
+#         "gz",
+#         "service",
+#         "-s",
+#         "/world/ground_plane_world/create",
+#         "--reqtype",
+#         "gz.msgs.EntityFactory",
+#         "--reptype",
+#         "gz.msgs.Boolean",
+#         "--timeout",
+#         "3000",
+#         "--req",
+#         f'sdf_filename: "{lion_sdf_path}" name: "lion_quadcopter" {lion_sdf_pose}',
+#     ]
+#     rc2 = subprocess.run(spawn_cmd, check=False, capture_output=True, text=True)
+#     if rc2.returncode != 0:
+#         raise RuntimeError(f"Spawn drone failed (code {rc2.returncode}): {rc2.stderr}")

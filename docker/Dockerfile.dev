@@ -57,11 +57,16 @@ ENV GZ_SIM_RESOURCE_PATH=/home/${USER_NAME}/.gazebo/models:/home/${USER_NAME}/St
 # Some loaders also use GZ_FILE_PATH for meshes/materials.
 ENV GZ_FILE_PATH=/home/${USER_NAME}/.gazebo/models:/home/${USER_NAME}/StalkerDroneRL/src/sdrl_lionquadcopter/models:${GZ_FILE_PATH}
 
-# Install ROS-GZ integration. DO NOT install Gazebo Classic
+# Install ROS-GZ integration for ROS 2 Humble and Gazebo Harmonic.
+# DO NOT install Gazebo Classic. If using:
+#     ros-${ROS_DISTRO}-ros-gz
+#     ros-${ROS_DISTRO}-ros-gz-bridge
+#     ros-${ROS_DISTRO}-ros-gz-sim
+# It installs the Gazebo Classic version.
 RUN apt update && apt install -y \
-    ros-${ROS_DISTRO}-ros-gz \
-    ros-${ROS_DISTRO}-ros-gz-bridge \
-    ros-${ROS_DISTRO}-ros-gz-sim \
+    ros-${ROS_DISTRO}-ros-gzharmonic \
+    ros-${ROS_DISTRO}-ros-gzharmonic-bridge \
+    ros-${ROS_DISTRO}-ros-gzharmonic-sim \
     && rm -rf /var/lib/apt/lists/*
 
 # Reinforcement Learning Python dependencies.

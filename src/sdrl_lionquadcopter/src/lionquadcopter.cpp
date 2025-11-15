@@ -117,6 +117,9 @@ void LionQuadcopter::Configure(const gz::sim::Entity &entity,
     }
     this->ros_node = std::make_shared<rclcpp::Node>("lion_quadcopter", ns);
 
+    // Follow Gazebo simulation time via the /clock topic.
+    this->ros_node->set_parameter(rclcpp::Parameter("use_sim_time", true));
+
     // Create callback group
     this->callback_group =
         this->ros_node->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
@@ -158,7 +161,8 @@ void LionQuadcopter::PreUpdate(const gz::sim::UpdateInfo &info,
 
     // Process ROS callbacks
     if (!this->shutting_down.load(std::memory_order_relaxed) && this->ros_node && rclcpp::ok()) {
-        // spin_some runs as long as it takes to execute all currently queued callbacks.
+        // spin_some runs as long as it takes to execute all currently queued callbacks. It
+        // processes all pending ROS callbacks on this node, including /clock topic.
         rclcpp::spin_some(this->ros_node);
     }
 
