@@ -81,25 +81,6 @@ gz service -i -s /world/ground_plane_world/control
 ros2 service call /X3/reset_drone_initial_pose std_srvs/srv/Trigger {}
 ```
 
----
-
-<!-- ## Reinforcement Learning
-```bash
-source /opt/ros/humble/setup.bash \
-&& colcon build --symlink-install --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-&& source ./install/setup.bash \
-&& ros2 launch sdrl_bringup train_sac_launch.py \
-  use_rviz:=true use_gui:=true control_mode:=rl
-
-source /opt/ros/humble/setup.bash \
-&& colcon build --symlink-install --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-&& source ./install/setup.bash \
-&& ros2 launch sdrl_bringup train_sac_launch.py \
-  use_rviz:=false use_gui:=false control_mode:=rl
-
-tensorboard --logdir ./tb_logs/SAC_0 --port 6006 --bind_all
-``` -->
-
 ## Notes on environment variables
 
 Set automatically by the launch/Docker image:
