@@ -129,6 +129,12 @@ class GeometricController:
         - linear: linear velocities in world frame
         - angular: angular velocities in body frame.
         """
+        force, torque = self.compute_wrench(curr_pose, curr_twist, desired_pose, desired_twist)
+        return self.wrench_to_motor_speeds(force, torque)
+
+    def compute_wrench(
+        self, curr_pose: Pose, curr_twist: Twist, desired_pose: Pose, desired_twist: Twist
+    ) -> tuple[float, np.ndarray]:
         curr_pos = np.array(
             [curr_pose.position.x, curr_pose.position.y, curr_pose.position.z], dtype=float
         )
@@ -195,8 +201,7 @@ class GeometricController:
             - self.kw_angvel * e_angvel
             + np.cross(curr_angvel, self.inertia * curr_angvel)
         )
-
-        return self.wrench_to_motor_speeds(force, torque)
+        return force, torque
 
     def compute_desired_orientation(self, acc, yaw):
         a = acc.copy()
@@ -271,8 +276,8 @@ class GeometricController:
         Keep this function for educational purposes.
         The pseudoinverse solution `w = np.linalg.pinv(mat) @ wrench` gives a least-squares solution
         to the linear system relating the desired force and torques [Fz, τx, τy, τz] to the squared
-        motor speeds `w = ω²`. Physically, a motor cannot spin at a negative speed, so `w_i = ω_i^2 ≥
-        0`. If the pseudoinverse returns negative entries, clipping them to zero introduces a
+        motor speeds `w = ω²`. Physically, a motor cannot spin at a negative speed, so `w_i = ω_i^2
+        ≥ 0`. If the pseudoinverse returns negative entries, clipping them to zero introduces a
         deviation from the requested wrench.
 
         Map a desired wrench (force + torque) directly to motor angular velocities (rad/s).
