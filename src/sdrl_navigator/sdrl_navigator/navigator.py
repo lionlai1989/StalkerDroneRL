@@ -384,15 +384,15 @@ class Navigator(Node):
             return None, None
 
         if state == "LANDED":
-            # Stay at the current pose
+            # Stay at the initial pose
             pose = Pose()
-            pose.position.x = self.latest_gt_odom.pose.pose.position.x
-            pose.position.y = self.latest_gt_odom.pose.pose.position.y
-            pose.position.z = self.latest_gt_odom.pose.pose.position.z
-            pose.orientation.x = self.latest_gt_odom.pose.pose.orientation.x
-            pose.orientation.y = self.latest_gt_odom.pose.pose.orientation.y
-            pose.orientation.z = self.latest_gt_odom.pose.pose.orientation.z
-            pose.orientation.w = self.latest_gt_odom.pose.pose.orientation.w
+            pose.position.x = INITIAL_POSE[0]
+            pose.position.y = INITIAL_POSE[1]
+            pose.position.z = INITIAL_POSE[2]
+            pose.orientation.x = 0.0
+            pose.orientation.y = 0.0
+            pose.orientation.z = 0.0
+            pose.orientation.w = 1.0
             twist = Twist()
             twist.linear.x = 0.0
             twist.linear.y = 0.0
