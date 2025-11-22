@@ -260,6 +260,9 @@ class Navigator(Node):
             Trigger, "/X3/reset_drone_initial_pose", self.handle_reset_service
         )
 
+        # Client to request dynamics reset (zero linear and angular velocity) from Gazebo plugin
+        self.reset_dynamics_client = self.create_client(Trigger, "/X3/reset_dynamics")
+
         # Synchronized subscribers for image and camera pose using exact-time policy
         self.img_sub = Subscriber(
             self, Image, "/X3/ros_bottom_cam/image_raw", qos_profile=qos_best_effort
