@@ -98,6 +98,13 @@ class GeometricController:
         # max acceleration for the drone (m/s^2)
         self.max_accel = self.compute_max_accel()
 
+        (
+            self.force_z_limit,
+            self.torque_x_limit,
+            self.torque_y_limit,
+            self.torque_z_limit,
+        ) = self.calculate_wrench_limits()
+
         assert self.max_accel > 0.0, "Max acceleration must be positive"
         assert self.rotor_cf > 0.0, "rotor_cf must be positive"
         assert self.rotor_cd > 0.0, "rotor_cd must be positive"
@@ -109,6 +116,27 @@ class GeometricController:
         F_max = 4 * rotor_cf * motor_max_rot_velocity^2
         """
         return 4.0 * self.rotor_cf * (self.motor_max_rot_velocity**2) / self.mass
+
+    def calculate_wrench_limits(self):
+        """Calculate force and torque limits based on motor capabilities.
+
+        Returns:
+            Tuple of (force_z_limit, torque_x_limit, torque_y_limit, torque_z_limit)
+            where each limit is a (min, max) tuple
+        """
+        # Maximum thrust force (all motors at max speed)
+        max_thrust_per_motor = self.rotor_cf * (self.motor_max_rot_velocity**2)
+        max_total_thrust = 4.0 * max_thrust_per_motor
+
+        force_z_limit = (0.0, max_total_thrust)
+
+        self.hover_thrust = self.mass * GRAVITY + 0.5  # 1.5 * 9.81 = 14.715 N, +0.5 or +1.0?
+
+        # TODO: To prevent the drone from crashing, limit rpy torque. Loosen them later.
+        torque_x_limit = (-0.1, 0.1)
+        torque_y_limit = (-0.1, 0.1)
+        torque_z_limit = (-0.05, 0.05)
+        return force_z_limit, torque_x_limit, torque_y_limit, torque_z_limit
 
     def compute_motor_speeds(
         self, curr_pose: Pose, curr_twist: Twist, desired_pose: Pose, desired_twist: Twist
