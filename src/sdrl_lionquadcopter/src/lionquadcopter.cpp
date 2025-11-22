@@ -128,6 +128,17 @@ void LionQuadcopter::Configure(const gz::sim::Entity &entity,
     this->init_ros_publishers();
     this->init_gz_subscribers();
 
+    // Service: reset dynamics (zero linear and angular velocity on the base link)
+    this->reset_dynamics_service = this->ros_node->create_service<std_srvs::srv::Trigger>(
+        "reset_dynamics", [this](const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
+                                 std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+            // Mark a reset to be applied in the next PreUpdate, where we have write access
+            // to the EntityComponentManager.
+            this->pending_reset_dynamics.store(true, std::memory_order_relaxed);
+            response->success = true;
+            response->message = "Dynamics reset requested";
+        });
+
     // Load drone config (odom and limits) and geometry from SDF/ECM
     this->load_drone_config(sdf, ecm);
 
@@ -178,6 +189,7 @@ void LionQuadcopter::PreUpdate(const gz::sim::UpdateInfo &info,
     // Read ground truth pose. Use parent entity of model_entity. TODO: figure this shit out
     if (auto pose_model =
             ecm.Component<gz::sim::components::Pose>(ecm.ParentEntity(this->model_entity))) {
+        std::lock_guard<std::mutex> lock(this->state_mutex);
         this->gt_pose = pose_model->Data();
     } else {
         throw std::runtime_error("No pose found on model_entity");
@@ -195,6 +207,21 @@ void LionQuadcopter::PreUpdate(const gz::sim::UpdateInfo &info,
         this->gt_angular_velocity = angvel_comp->Data();
     } else {
         throw std::runtime_error("No angular velocity found on model or link");
+    }
+
+    // Optionally zero dynamics when requested.
+    if (this->pending_reset_dynamics.load(std::memory_order_relaxed)) {
+        if (auto linvel_comp =
+                ecm.Component<gz::sim::components::LinearVelocity>(this->baselink_entity)) {
+            linvel_comp->Data().Set(0.0, 0.0, 0.0);
+            this->gt_linear_velocity.Set(0.0, 0.0, 0.0);
+        }
+        if (auto angvel_comp =
+                ecm.Component<gz::sim::components::AngularVelocity>(this->baselink_entity)) {
+            angvel_comp->Data().Set(0.0, 0.0, 0.0);
+            this->gt_angular_velocity.Set(0.0, 0.0, 0.0);
+        }
+        this->pending_reset_dynamics.store(false, std::memory_order_relaxed);
     }
 
     // Approximate acceleration
@@ -237,6 +264,7 @@ void LionQuadcopter::PostUpdate(const gz::sim::UpdateInfo &info,
     // Read ground truth pose. Use parent entity of model_entity. TODO: figure this shit out
     if (auto pose_model =
             ecm.Component<gz::sim::components::Pose>(ecm.ParentEntity(this->model_entity))) {
+        std::lock_guard<std::mutex> lock(this->state_mutex);
         this->gt_pose = pose_model->Data();
     } else {
         throw std::runtime_error("No pose found on model_entity");
@@ -382,8 +410,13 @@ void LionQuadcopter::repub_ros_image(const gz::msgs::Image &gz_img) {
 
     // Compute camera world pose using cached drone pose and fixed base->camera transform. This
     // approach may be inaccurate because gt_pose is not synchronized with the image. But the
-    // updating frequency of gt_pose (1000 HZ) is much higher than the image (20 HZ).
-    gz::math::Pose3d cam_world_pose = this->gt_pose * this->transform_b2c;
+    // updating frequency of gt_pose (1000 HZ) is much higher than the image's updating frequency.
+    gz::math::Pose3d current_gt_pose;
+    {
+        std::lock_guard<std::mutex> lock(this->state_mutex);
+        current_gt_pose = this->gt_pose;
+    }
+    gz::math::Pose3d cam_world_pose = current_gt_pose * this->transform_b2c;
 
     // Publish camera pose as PoseStamped in odom frame
     geometry_msgs::msg::PoseStamped cam_pose_msg;
@@ -463,7 +496,8 @@ void LionQuadcopter::repub_ros_camera_info(const gz::msgs::CameraInfo &gzInfo) {
 
     // Set header
     ros_info.header.stamp = ros_node->now();
-    ros_info.header.frame_id = "downward_camera_frame";
+    std::string ns = this->ros_node->get_namespace();
+    ros_info.header.frame_id = ns + "/downward_camera_frame";
 
     // Set image dimensions
     ros_info.width = gzInfo.width();

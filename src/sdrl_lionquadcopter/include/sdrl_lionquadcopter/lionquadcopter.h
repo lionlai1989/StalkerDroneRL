@@ -30,6 +30,7 @@
 #include <gz/sim/components/Pose.hh>
 #include <gz/transport/Node.hh>
 #include <memory>
+#include <mutex>
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/callback_group.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -42,6 +43,7 @@
 #include <std_msgs/msg/int8.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <std_srvs/srv/set_bool.hpp>
+#include <std_srvs/srv/trigger.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2_ros/transform_broadcaster.h>
@@ -99,10 +101,12 @@ class LionQuadcopter : public gz::sim::System,
     rclcpp::Node::SharedPtr ros_node{nullptr};
     rclcpp::CallbackGroup::SharedPtr callback_group{nullptr};
 
+    // Service to allow external nodes (e.g. Navigator) to request a dynamics reset
+    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_dynamics_service{nullptr};
+
     // ROS Interfaces
     geometry_msgs::msg::Pose cmd_pose;
     geometry_msgs::msg::Twist cmd_twist;
-    nav_msgs::msg::Odometry odom; // why do we need this if we have gt_pose
 
     // ROS Node Subscribers
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr cmd_odom_subscriber{nullptr};
@@ -117,6 +121,7 @@ class LionQuadcopter : public gz::sim::System,
     // Ground truth state of the drone acquired from Gazebo. These values are used for geometric
     // control. In theory, we should implement a pose estimation filter using IMU and GPS which is a
     // different topic. We can just use ground truth pose for control for now.
+    std::mutex state_mutex;
     gz::math::Pose3d gt_pose;
     gz::math::Vector3d gt_linear_velocity;
     gz::math::Vector3d gt_linear_accel; // calculated from gt_linear_velocity
@@ -161,6 +166,7 @@ class LionQuadcopter : public gz::sim::System,
      */
     std::atomic<bool> shutting_down{false};
     std::atomic<int> inflight_callbacks{0};
+    std::atomic<bool> pending_reset_dynamics{false};
 };
 
 } // namespace sdrl
