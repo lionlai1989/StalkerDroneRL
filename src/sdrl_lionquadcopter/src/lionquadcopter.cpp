@@ -163,13 +163,10 @@ void LionQuadcopter::Configure(const gz::sim::Entity &entity,
 /**
  * PreUpdate: called every simulation iteration before physics integration.
  * Gazebo Sim (gz-physics) performs physics integration between PreUpdate and PostUpdate.
+ * It is called when the simulation is paused or unpaused.
  */
 void LionQuadcopter::PreUpdate(const gz::sim::UpdateInfo &info,
                                gz::sim::EntityComponentManager &ecm) {
-    if (info.paused) {
-        return;
-    }
-
     // Process ROS callbacks
     if (!this->shutting_down.load(std::memory_order_relaxed) && this->ros_node && rclcpp::ok()) {
         // spin_some runs as long as it takes to execute all currently queued callbacks. It
@@ -179,9 +176,9 @@ void LionQuadcopter::PreUpdate(const gz::sim::UpdateInfo &info,
 
     static std::chrono::steady_clock::duration lastSimTime{0};
     auto simTime = info.simTime;
-    // dt is 0.001
     double dt = std::chrono::duration<double>(simTime - lastSimTime).count();
     if (lastSimTime == std::chrono::steady_clock::duration{0}) {
+        // Force dt to be 0.0 for the very first iteration.
         dt = 0.0;
     }
     lastSimTime = simTime;
@@ -224,12 +221,6 @@ void LionQuadcopter::PreUpdate(const gz::sim::UpdateInfo &info,
         this->pending_reset_dynamics.store(false, std::memory_order_relaxed);
     }
 
-    // Approximate acceleration
-    static gz::math::Vector3d prev_vel = this->gt_linear_velocity;
-    this->gt_linear_accel =
-        (dt > 0.0) ? (this->gt_linear_velocity - prev_vel) / dt : gz::math::Vector3d::Zero;
-    prev_vel = this->gt_linear_velocity;
-
     // Publish ground truth pose. should i publish before or after updating dynamics?
     // geometry_msgs::msg::Pose gt_pose;
     // gt_pose.position.x = this->gt_pose.Pos().X();
@@ -241,21 +232,19 @@ void LionQuadcopter::PreUpdate(const gz::sim::UpdateInfo &info,
     // gt_pose.orientation.z = this->gt_pose.Rot().Z();
     // this->pub_gt_pose->publish(gt_pose);
 
-    // Update dynamics and apply forces
-    if (dt > 0.0) {
-        // Forward latest ROS motor speeds to the MulticopterMotorModel
-        if (this->motor_pub && this->ros_motor_cmd_available) {
-            gz::msgs::Actuators msg;
-            for (double w : this->ros_motor_speeds) {
-                msg.add_velocity(w);
-            }
-            this->motor_pub.Publish(msg);
+    // Forward latest ROS motor speeds to the MulticopterMotorModel
+    if (this->motor_pub && this->ros_motor_cmd_available) {
+        gz::msgs::Actuators msg;
+        for (double w : this->ros_motor_speeds) {
+            msg.add_velocity(w);
         }
+        this->motor_pub.Publish(msg);
     }
 }
 
 /**
  * PostUpdate: called every simulation iteration after physics integration.
+ * It is called when the simulation is paused or unpaused.
  */
 void LionQuadcopter::PostUpdate(const gz::sim::UpdateInfo &info,
                                 const gz::sim::EntityComponentManager &ecm) {

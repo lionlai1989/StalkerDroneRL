@@ -124,7 +124,6 @@ class LionQuadcopter : public gz::sim::System,
     std::mutex state_mutex;
     gz::math::Pose3d gt_pose;
     gz::math::Vector3d gt_linear_velocity;
-    gz::math::Vector3d gt_linear_accel; // calculated from gt_linear_velocity
     gz::math::Vector3d gt_angular_velocity;
 
     // Fixed transformation (R + T) from drone base to camera frame
