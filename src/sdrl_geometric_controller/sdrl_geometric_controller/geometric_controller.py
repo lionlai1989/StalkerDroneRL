@@ -10,8 +10,8 @@ import math
 import numpy as np
 from geometry_msgs.msg import Pose, Twist
 from sdrl_geometric_controller.transform import quat_to_rotmat, quat_to_euler
-
-GRAVITY = 9.81
+from sdrl_geometric_controller.motor_mixing import wrench_to_motor_speeds
+from sdrl_geometric_controller.quadcopter_params import QuadcopterParams, GRAVITY
 
 
 def rotation_error(rot_current: np.ndarray, rot_desired: np.ndarray) -> np.ndarray:
@@ -36,76 +36,7 @@ class GeometricController:
         # Derivative gain on angular velocity error for angular velocity control
         self.kw_angvel = 3.0
 
-        # NOTE: Physical parameters defined here MUST match the values defined in
-        # "src/sdrl_lionquadcopter/models/lion_quadcopter.sdf"
-        # "src/sdrl_lionquadcopter/models/x3_uav/model.sdf"
-        # Mass of the drone (kg)
-        self.mass = 1.5
-        # Diagonal inertia [Ixx, Iyy, Izz]
-        self.inertia = np.array([0.0347563, 0.07, 0.0977], dtype=float)
-        # Thrust coefficient cf or motorConstant (N / (rad/s)^2)
-        self.rotor_cf = 8.54858e-06
-        # Drag coefficient cd or momentConstant (N*m / (rad/s)^2)
-        self.rotor_cd = 0.016
-        # Maximum rotor angular velocity (rad/s)
-        self.motor_max_rot_velocity = 800.0
-        # Rotor positions (x, y, z) in body frame. All rotations are identity matrix.
-        self.rotor_positions = np.array(
-            [
-                [0.13, -0.22, 0.023],
-                [-0.13, 0.2, 0.023],
-                [0.13, 0.22, 0.023],
-                [-0.13, -0.2, 0.023],
-            ]
-        )
-        # Rotor yaw torque directions (+1 for ccw, -1 for cw)
-        self.yaw_signs = np.array([+1, +1, -1, -1])
-
-        # max tilt angle for the drone (rad)
-        self.max_tilt_angle = math.pi / 12
-
-        # max acceleration for the drone (m/s^2)
-        self.max_accel = self.compute_max_accel()
-
-        (
-            self.force_z_limit,
-            self.torque_x_limit,
-            self.torque_y_limit,
-            self.torque_z_limit,
-        ) = self.calculate_wrench_limits()
-
-        assert self.max_accel > 0.0, "Max acceleration must be positive"
-        assert self.rotor_cf > 0.0, "rotor_cf must be positive"
-        assert self.rotor_cd > 0.0, "rotor_cd must be positive"
-        assert self.motor_max_rot_velocity > 0.0, "motor_max_rot_velocity must be positive"
-
-    def compute_max_accel(self):
-        """Compute thrust-limited max acceleration magnitude (m/s^2).
-
-        F_max = 4 * rotor_cf * motor_max_rot_velocity^2
-        """
-        return 4.0 * self.rotor_cf * (self.motor_max_rot_velocity**2) / self.mass
-
-    def calculate_wrench_limits(self):
-        """Calculate force and torque limits based on motor capabilities.
-
-        Returns:
-            Tuple of (force_z_limit, torque_x_limit, torque_y_limit, torque_z_limit)
-            where each limit is a (min, max) tuple
-        """
-        # Maximum thrust force (all motors at max speed)
-        max_thrust_per_motor = self.rotor_cf * (self.motor_max_rot_velocity**2)
-        max_total_thrust = 4.0 * max_thrust_per_motor
-
-        force_z_limit = (0.0, max_total_thrust)
-
-        self.hover_thrust = self.mass * GRAVITY + 0.5  # 1.5 * 9.81 = 14.715 N, +0.5 or +1.0?
-
-        # TODO: To prevent the drone from crashing, limit rpy torque. Loosen them later.
-        torque_x_limit = (-0.1, 0.1)
-        torque_y_limit = (-0.1, 0.1)
-        torque_z_limit = (-0.05, 0.05)
-        return force_z_limit, torque_x_limit, torque_y_limit, torque_z_limit
+        self.drone_params = QuadcopterParams()
 
     def compute_motor_speeds(
         self, curr_pose: Pose, curr_twist: Twist, desired_pose: Pose, desired_twist: Twist
@@ -130,11 +61,11 @@ class GeometricController:
         return wrench_to_motor_speeds(
             force,
             torque,
-            self.rotor_positions,
-            self.rotor_cf,
-            self.rotor_cd,
-            self.yaw_signs,
-            self.motor_max_rot_velocity,
+            self.drone_params.rotor_positions,
+            self.drone_params.rotor_cf,
+            self.drone_params.rotor_cd,
+            self.drone_params.yaw_signs,
+            self.drone_params.motor_max_rot_velocity,
         )
 
     def compute_wrench(
@@ -190,21 +121,21 @@ class GeometricController:
             + GRAVITY * np.array([0.0, 0.0, 1.0])
         )  # Control acceleration from PD control and gravity. Discard the desired acc.
         body_z = curr_rot[:, 2]
-        force = self.mass * float(np.dot(acc_ctrl, body_z))
+        force = self.drone_params.mass * float(np.dot(acc_ctrl, body_z))
         if force < 0.0:  # NOTE: what would happen if force is negative?
             force = 0.0
 
         # Compute torque
         acc_mag = np.linalg.norm(acc_ctrl)
-        if acc_mag > self.max_accel:
-            acc_ctrl = acc_ctrl * (self.max_accel / acc_mag)
+        if acc_mag > self.drone_params.max_accel:
+            acc_ctrl = acc_ctrl * (self.drone_params.max_accel / acc_mag)
         desired_rot = self.compute_desired_orientation(acc_ctrl, des_yaw)
         e_rot = rotation_error(curr_rot, desired_rot)
         e_angvel = curr_angvel - curr_rot.T.dot(desired_rot.dot(des_angvel))
         torque = (
             -self.kr_rotmat * e_rot
             - self.kw_angvel * e_angvel
-            + np.cross(curr_angvel, self.inertia * curr_angvel)
+            + np.cross(curr_angvel, self.drone_params.inertia * curr_angvel)
         )
         return force, torque
 
@@ -213,7 +144,7 @@ class GeometricController:
         if a[2] < 1e-6:
             a[2] = 1e-6
         horiz = math.hypot(a[0], a[1])
-        max_horiz = math.tan(self.max_tilt_angle) * abs(a[2])
+        max_horiz = math.tan(self.drone_params.max_tilt_angle) * abs(a[2])
         if horiz > max_horiz:
             scale = max_horiz / (horiz + 1e-9)
             a[0] *= scale
