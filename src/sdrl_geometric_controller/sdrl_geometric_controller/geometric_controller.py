@@ -9,11 +9,12 @@ import math
 
 import numpy as np
 from geometry_msgs.msg import Pose, Twist
+from sdrl_geometric_controller.transform import quat_to_rotmat, quat_to_euler
 
 GRAVITY = 9.81
 
 
-def rotation_error(rot_current, rot_desired):
+def rotation_error(rot_current: np.ndarray, rot_desired: np.ndarray) -> np.ndarray:
     rot_err = rot_desired.T @ rot_current - rot_current.T @ rot_desired
     return np.array(
         [
@@ -22,38 +23,6 @@ def rotation_error(rot_current, rot_desired):
             0.5 * (rot_err[1, 0] - rot_err[0, 1]),
         ]
     )
-
-
-def quaternion_to_rotation_matrix(q):
-    w, x, y, z = q
-    n = w * w + x * x + y * y + z * z
-    if n < 1e-9:
-        return np.eye(3)
-    s = 2.0 / n
-    wx = s * w * x
-    wy = s * w * y
-    wz = s * w * z
-    xx = s * x * x
-    xy = s * x * y
-    xz = s * x * z
-    yy = s * y * y
-    yz = s * y * z
-    zz = s * z * z
-    R = np.array(
-        [
-            [1 - (yy + zz), xy - wz, xz + wy],
-            [xy + wz, 1 - (xx + zz), yz - wx],
-            [xz - wy, yz + wx, 1 - (xx + yy)],
-        ]
-    )
-    return R
-
-
-def quaternion_to_euler_yaw(q):
-    w, x, y, z = q
-    siny = 2.0 * (w * z + x * y)
-    cosy = 1.0 - 2.0 * (y * y + z * z)
-    return math.atan2(siny, cosy)
 
 
 class GeometricController:
@@ -194,7 +163,7 @@ class GeometricController:
             ],
             dtype=float,
         )
-        des_yaw = float(quaternion_to_euler_yaw(des_wxyz))
+        _, _, des_yaw = quat_to_euler(des_wxyz[0], des_wxyz[1], des_wxyz[2], des_wxyz[3])
         des_lin_vel = np.array(
             [desired_twist.linear.x, desired_twist.linear.y, desired_twist.linear.z], dtype=float
         )
@@ -206,7 +175,7 @@ class GeometricController:
         e_linvel = curr_linvel - des_lin_vel
 
         # Compute force
-        curr_rot = quaternion_to_rotation_matrix(curr_wxyz)
+        curr_rot = quat_to_rotmat(curr_wxyz[0], curr_wxyz[1], curr_wxyz[2], curr_wxyz[3])
         acc_ctrl = (
             -self.kp_position * e_pos
             - self.kv_linvel * e_linvel
