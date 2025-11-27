@@ -1,6 +1,6 @@
 """
 Navigator node.
-The Navigator has two control modes:
+The Navigator has three control modes:
 
 If the control_mode is "geometric", the Navigator will use the GeometricController to compute the
 motor speeds and publish them to the /X3/ros/motor_speed topic.
@@ -47,48 +47,6 @@ from sdrl_perception import (
 
 WORLD = "ground_plane_world"
 QUADCOPTER_MODEL = "lion_quadcopter"
-
-# initial pose of the quadcopter
-INITIAL_POSE = (0.0, 0.0, 0.0)
-
-
-def quat_to_rpy(quat) -> Tuple[float, float, float]:
-    """Convert a quaternion to roll, pitch, yaw."""
-    roll = np.arctan2(
-        2.0 * (quat.w * quat.x + quat.y * quat.z), 1.0 - 2.0 * (quat.x * quat.x + quat.y * quat.y)
-    )
-    pitch = np.arcsin(2.0 * (quat.w * quat.y - quat.z * quat.x))
-    yaw = np.arctan2(
-        2.0 * (quat.w * quat.z + quat.x * quat.y), 1.0 - 2.0 * (quat.y * quat.y + quat.z * quat.z)
-    )
-    return roll, pitch, yaw
-
-
-def rpy_to_tilt_angle(roll: float, pitch: float, yaw: float) -> float:
-    """Get the tilt angle from roll and pitch angles. Yaw is ignored."""
-    return float(np.sqrt(roll * roll + pitch * pitch))
-
-
-def yaw_from_odom(odom: Odometry) -> float:
-    q = odom.pose.pose.orientation
-    siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
-    cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
-    return float(np.arctan2(siny_cosp, cosy_cosp))
-
-
-def rpy_to_quat(roll: float, pitch: float, yaw: float):
-    """Convert roll, pitch, yaw to quaternion."""
-    cy = np.cos(yaw * 0.5)
-    sy = np.sin(yaw * 0.5)
-    cp = np.cos(pitch * 0.5)
-    sp = np.sin(pitch * 0.5)
-    cr = np.cos(roll * 0.5)
-    sr = np.sin(roll * 0.5)
-    qw = cr * cp * cy + sr * sp * sy
-    qx = sr * cp * cy - cr * sp * sy
-    qy = cr * sp * cy + sr * cp * sy
-    qz = cr * cp * sy - sr * sp * cy
-    return (qx, qy, qz, qw)
 
 
 class BallState:
@@ -206,7 +164,12 @@ class NaviStateMachine:
             if curr_pos.z < self.crashed_height:
                 self.state = "CRASHED"
                 return
-            if rpy_to_tilt_angle(*quat_to_rpy(curr_quat)) > self.crashed_tilt_angle:
+            if (
+                roll_pitch_to_tilt(
+                    *quat_to_euler(curr_quat.w, curr_quat.x, curr_quat.y, curr_quat.z)[:2]
+                )
+                > self.crashed_tilt_angle
+            ):
                 self.state = "CRASHED"
                 return
             if curr_pos.z > self.max_altitude:
@@ -225,7 +188,7 @@ class Navigator(Node):
         super().__init__("navigator")
 
         # `control_mode` SHALL NOT be changed after initialization.
-        self.declare_parameter("control_mode", "geometric")  # "geometric" or "rl"
+        self.declare_parameter("control_mode", "geometric")  # "geometric", "rl", "rl_train"
         self.control_mode = self.get_parameter("control_mode").get_parameter_value().string_value
 
         # When use_sim_time is true, this clock uses simulation time from /clock topic
@@ -428,8 +391,13 @@ class Navigator(Node):
             return pose, twist
 
         if state == "FLYING":
-            yaw = yaw_from_odom(self.latest_gt_odom)
-            qx, qy, qz, qw = rpy_to_quat(0.0, 0.0, yaw)
+            _, _, yaw = quat_to_euler(
+                self.latest_gt_odom.pose.pose.orientation.w,
+                self.latest_gt_odom.pose.pose.orientation.x,
+                self.latest_gt_odom.pose.pose.orientation.y,
+                self.latest_gt_odom.pose.pose.orientation.z,
+            )
+            qw, qx, qy, qz = euler_to_quat(0.0, 0.0, yaw)
             pose = Pose()
             if self.latest_ball_state.detected is False:  # No ball detected
                 if self.latest_desired_odom is not None:  # Stay at desired xy
