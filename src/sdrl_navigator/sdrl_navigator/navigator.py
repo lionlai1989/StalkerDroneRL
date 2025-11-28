@@ -8,6 +8,9 @@ motor speeds and publish them to the /X3/ros/motor_speed topic.
 If the control_mode is "rl", it will load the RL model and use it to compute the motor speeds and
 publish them to the /X3/ros/motor_speed topic.
 
+If the control_mode is "rl_train", it will start the RL training mode. The motro speeds will be
+published by the `train_sac.py` script.
+
 During the RL training, if the episode is terminated or truncated, the `train_sac.py` will request
 the Navigator to reset the drone to its initial pose and clear the internal state.
 
@@ -20,6 +23,7 @@ Here, I don't think state_machine_step should run as fast as synced_image_pose_c
 be enough to update the state machine and the command odometry.
 """
 
+import time
 import traceback
 from pathlib import Path
 from typing import Optional, Tuple
@@ -44,6 +48,8 @@ from sdrl_perception import (
     detect_red_ball,
     intersect_ray_with_plane_z,
 )
+from sdrl_rl_controller import SacController
+from sdrl_geometric_controller.transform import quat_to_euler, roll_pitch_to_tilt, euler_to_quat
 
 WORLD = "ground_plane_world"
 QUADCOPTER_MODEL = "lion_quadcopter"
