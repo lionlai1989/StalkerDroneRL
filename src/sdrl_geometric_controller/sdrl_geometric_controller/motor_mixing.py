@@ -28,18 +28,15 @@ def wrench_to_motor_speeds(
     assert arm_len > 0.0, "Lever arm length must be positive"
 
     # Roll: delta_f_i = (torque_x / (4 * lever_arm)) * sy_i
-    ax = torque[0] / (4.0 * arm_len)
-    thrusts += ax * sy
+    thrusts += (torque[0] / (4.0 * arm_len)) * sy
 
     # Pitch: delta_f_i = (-torque_y / (4 * lever_arm)) * sx_i
-    ay = -torque[1] / (4.0 * arm_len)
-    thrusts += ay * sx
+    thrusts += (-torque[1] / (4.0 * arm_len)) * sx
 
     # Yaw: delta_f_i = (torque_z/(4c)) * yaw_sign_i
     c = rotor_cd / rotor_cf
     assert c > 0.0, "c must be positive"
-    az = torque[2] / (4.0 * c)
-    thrusts += az * yaw_signs
+    thrusts += (torque[2] / (4.0 * c)) * yaw_signs
 
     # Ensure non-negative thrust
     thrusts = np.clip(thrusts, 0.0, None)
