@@ -1,9 +1,13 @@
 import math
-import subprocess
 
 import numpy as np
 import rclpy
 from rclpy.node import Node
+
+
+# Harmonic Debian packages expose versioned subpackages
+import gz.transport13 as gz_transport
+from gz.msgs10.twist_pb2 import Twist
 
 
 class ObjectMover(Node):
@@ -53,13 +57,19 @@ class ObjectMover(Node):
         # Gazebo topic to command velocity
         self.cmd_topic = f"/model/{self.entity_name}/cmd_vel"
 
+        # Initialize Gazebo transport node and publisher
+        self.gz_node = gz_transport.Node()
+        self.gz_pub = self.gz_node.advertise(self.cmd_topic, Twist)
+
         self.timer = self.create_timer(3.0, self.update, clock=self.clock)  # (seconds)
 
     def update(self):
+        msg = Twist()
         if self.trajectory == "circle":
             v = self.speed
             w = self.omega
-            payload = f"linear: {{x: {v}}}, angular: {{z: {w}}}"
+            msg.linear.x = v
+            msg.angular.z = w
 
         elif self.trajectory == "random":
             v = self.speed
@@ -68,31 +78,14 @@ class ObjectMover(Node):
             v += self.rng.uniform(0.0, 0.5)
             w += self.rng.uniform(0.0, 0.5)
 
-            payload = f"linear: {{x: {v}, y: {v}}}, angular: {{z: {w}}}"
+            msg.linear.x = v
+            msg.linear.y = v
+            msg.angular.z = w
 
         else:
             raise ValueError(f"Invalid trajectory: {self.trajectory}")
 
-        self.send_gz_twist(payload)
-
-    def send_gz_twist(self, payload: str):
-        cmd = [
-            "gz",
-            "topic",
-            "-t",
-            self.cmd_topic,
-            "-m",
-            "gz.msgs.Twist",
-            "-p",
-            payload,
-        ]
-        try:
-            # NOTE: If using timeout, it will raise an exception if the command takes too long to
-            # complete. Interestingly, this command takes longer than I expected. I don't know why.
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
-        except Exception as exc:
-            self.get_logger().warn(f"Failed to send gz twist: {exc}")
-            raise RuntimeError(f"Failed to send gz twist: {exc}")
+        self.gz_pub.publish(msg)
 
 
 def main(args=None):
