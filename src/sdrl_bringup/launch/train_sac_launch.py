@@ -69,8 +69,8 @@ def generate_launch_description():
     )
     control_mode_arg = DeclareLaunchArgument(
         "control_mode",
-        choices=["geometric", "rl"],
-        description="Navigator control mode (geometric or rl)",
+        choices=["geometric", "rl", "rl_train"],
+        description="Navigator control mode (geometric or rl or rl_train)",
     )
 
     # Ensure Gazebo can find our system plugin and model resources
@@ -300,8 +300,8 @@ def generate_launch_description():
             gazebo_gui,
             gazebo_headless,
             # Deterministic sequencing
-            delayed_spawn_ball,
-            delayed_mover,
+            # delayed_spawn_ball,
+            # delayed_mover,
             delayed_tf_publisher,
             delayed_rviz_node,
             delayed_navigator_launch,

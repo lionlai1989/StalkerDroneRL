@@ -167,21 +167,13 @@ void LionQuadcopter::Configure(const gz::sim::Entity &entity,
  */
 void LionQuadcopter::PreUpdate(const gz::sim::UpdateInfo &info,
                                gz::sim::EntityComponentManager &ecm) {
+    (void)info;
     // Process ROS callbacks
     if (!this->shutting_down.load(std::memory_order_relaxed) && this->ros_node && rclcpp::ok()) {
         // spin_some runs as long as it takes to execute all currently queued callbacks. It
         // processes all pending ROS callbacks on this node, including /clock topic.
         rclcpp::spin_some(this->ros_node);
     }
-
-    static std::chrono::steady_clock::duration lastSimTime{0};
-    auto simTime = info.simTime;
-    double dt = std::chrono::duration<double>(simTime - lastSimTime).count();
-    if (lastSimTime == std::chrono::steady_clock::duration{0}) {
-        // Force dt to be 0.0 for the very first iteration.
-        dt = 0.0;
-    }
-    lastSimTime = simTime;
 
     // Read ground truth pose. Use parent entity of model_entity. TODO: figure this shit out
     if (auto pose_model =

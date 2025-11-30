@@ -72,7 +72,37 @@ class QuadcopterParams:
 
         self.hover_thrust = self.mass * GRAVITY + 1.5  # 1.5 * 9.81 = 14.715 N, +0.5 or +1.0?
 
-        # TODO: To prevent the drone from crashing, limit rpy torque. Loosen them later.
+        # Torque X = sum(y_i * F_i)
+        ys = self.rotor_positions[:, 1]
+        # Max positive torque: motors with positive y at max thrust
+        tx_max = np.sum(ys[ys > 0]) * max_thrust_per_motor
+        # Min negative torque: motors with negative y at max thrust
+        tx_min = np.sum(ys[ys < 0]) * max_thrust_per_motor
+        torque_x_limit = (tx_min, tx_max)
+
+        # Torque Y = sum(-x_i * F_i)
+        xs = self.rotor_positions[:, 0]
+        # Max positive torque: motors with negative x (so -x > 0) at max thrust
+        ty_max = np.sum(-xs[xs < 0]) * max_thrust_per_motor
+        # Min negative torque: motors with positive x (so -x < 0) at max thrust
+        ty_min = np.sum(-xs[xs > 0]) * max_thrust_per_motor
+        torque_y_limit = (ty_min, ty_max)
+
+        # Torque Z = sum(yaw_sign_i * M_i)
+        # M_i = rotor_cd * omega_i^2 = rotor_cd * (max_vel^2)
+        max_moment_per_motor = self.rotor_cd * (self.motor_max_rot_velocity**2)
+        # Max positive torque: motors with positive yaw_sign at max speed
+        tz_max = np.sum(self.yaw_signs[self.yaw_signs > 0]) * max_moment_per_motor
+        # Min negative torque: motors with negative yaw_sign at max speed
+        tz_min = np.sum(self.yaw_signs[self.yaw_signs < 0]) * max_moment_per_motor
+        torque_z_limit = (tz_min, tz_max)
+        # Print the wrench limits shows:
+        # force_z_limit: (0.0, 21.8843648) -> OK
+        # torque_x_limit: (-2.297858304, 2.297858304) -> OK
+        # torque_y_limit: (-1.422483712, 1.422483712) -> OK
+        # torque_z_limit: (-20480.0, 20480.0) -> NOT OK. TOO LARGE. rotor_cd needs to be adjusted.
+
+        # TODO: To prevent the drone from crashing, limit torque. Consider curriculum learning.
         torque_x_limit = (-0.1, 0.1)
         torque_y_limit = (-0.1, 0.1)
         torque_z_limit = (-0.1, 0.1)

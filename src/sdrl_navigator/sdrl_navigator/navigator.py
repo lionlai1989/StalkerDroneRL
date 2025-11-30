@@ -153,7 +153,21 @@ class NaviStateMachine:
 
         if self.state == "TAKINGOFF":
             # Crash check
-            if rpy_to_tilt_angle(*quat_to_rpy(curr_quat)) > self.crashed_tilt_angle:
+            # If the distance between the current position and the takeoff target is too large, the
+            # drone switches to CRASHED state.
+            dist_to_takeoff = np.linalg.norm(
+                np.array([curr_pos.x, curr_pos.y, curr_pos.z]) - self.takeoff_target
+            )
+            if dist_to_takeoff > 3.0 * self.cruising_altitude:
+                self.state = "CRASHED"
+                return
+
+            if (
+                roll_pitch_to_tilt(
+                    *quat_to_euler(curr_quat.w, curr_quat.x, curr_quat.y, curr_quat.z)[:2]
+                )
+                > self.crashed_tilt_angle
+            ):
                 self.state = "CRASHED"
                 return
             if curr_pos.z > self.max_altitude:
@@ -196,6 +210,8 @@ class Navigator(Node):
         # `control_mode` SHALL NOT be changed after initialization.
         self.declare_parameter("control_mode", "geometric")  # "geometric", "rl", "rl_train"
         self.control_mode = self.get_parameter("control_mode").get_parameter_value().string_value
+
+        self.initial_pose = (0.0, 0.0, 0.0)
 
         # When use_sim_time is true, this clock uses simulation time from /clock topic
         # When use_sim_time is false, this clock uses wall-clock time.
@@ -289,15 +305,12 @@ class Navigator(Node):
             self.get_logger().info("Initializing geometric controller")
             self.controller = GeometricController()
         elif self.control_mode == "rl":
-            from sdrl_rl_controller import SacController
-
             rl_model_path = Path("/home/lion/StalkerDroneRL/checkpoints/sac_quadcopter_final.zip")
-            if not rl_model_path.exists():
-                self.get_logger().warning("RL model not found. Starting RL in training mode.")
-                self.controller = None
-            else:
-                self.get_logger().info(f"Initializing RL controller with model: {rl_model_path}")
-                self.controller = SacController(model_path=str(rl_model_path))
+            self.get_logger().info(f"Initializing RL controller with model: {rl_model_path}")
+            self.controller = SacController(model_path=str(rl_model_path))
+        elif self.control_mode == "rl_train":
+            self.get_logger().info("Initializing RL training mode")
+            self.controller = None
         else:
             raise ValueError(f"Invalid control mode: {self.control_mode}")
 
@@ -358,9 +371,9 @@ class Navigator(Node):
         if state == "LANDED":
             # Stay at the initial pose
             pose = Pose()
-            pose.position.x = INITIAL_POSE[0]
-            pose.position.y = INITIAL_POSE[1]
-            pose.position.z = INITIAL_POSE[2]
+            pose.position.x = self.initial_pose[0]
+            pose.position.y = self.initial_pose[1]
+            pose.position.z = self.initial_pose[2]
             pose.orientation.x = 0.0
             pose.orientation.y = 0.0
             pose.orientation.z = 0.0
@@ -384,13 +397,16 @@ class Navigator(Node):
             pose.orientation.z = 0.0
             pose.orientation.w = 1.0
             twist = Twist()
-            twist.linear.x = 0.0
-            twist.linear.y = 0.0
-            # Vertical feedforward velocity toward target altitude (saturated)
+
+            x_err = self.takeoff_target[0] - self.latest_gt_odom.pose.pose.position.x
+            y_err = self.takeoff_target[1] - self.latest_gt_odom.pose.pose.position.y
             z_err = self.takeoff_target[2] - self.latest_gt_odom.pose.pose.position.z
-            k_vz = 0.3  # gain to tune
-            vz_max = 1.0  # maximum vertical velocity (m/s)
-            twist.linear.z = np.clip(k_vz * z_err, -vz_max, vz_max)
+            v_max = 1.0  # maximum velocity (m/s)
+            k_vx, k_vy, k_vz = 0.1, 0.1, 0.3  # gain to tune
+            twist.linear.x = np.clip(k_vx * x_err, -v_max, v_max)
+            twist.linear.y = np.clip(k_vy * y_err, -v_max, v_max)
+            twist.linear.z = np.clip(k_vz * z_err, -v_max, v_max)
+
             twist.angular.x = 0.0
             twist.angular.y = 0.0
             twist.angular.z = 0.0
@@ -565,21 +581,50 @@ class Navigator(Node):
         """
         # self.get_logger().info("Repositioning drone to initial pose")
 
-        # Publish zero motor speeds a few times to clear rotor state
+        # Publish zero motor speeds a few times to clear rotor state.
+        # We send multiple messages with a short delay so that:
+        # - the LionQuadcopter plugin reliably receives at least one zero‑command over several
+        #   simulation iterations
+        # - the MulticopterMotorModel has time to drive its internal rotor state toward zero thrust
+        #   before we teleport the drone with set_pose.
         zero_msg = Float32MultiArray()
         zero_msg.data = [0.0, 0.0, 0.0, 0.0]
         for _ in range(3):
             self.ros_motor_publisher.publish(zero_msg)
+            time.sleep(0.005)
+            # We cannot use self.create_rate(..., clock=self.clock) here because this code runs
+            # inside a service callback. While the callback is executing, the node's executor cannot
+            # process incoming /clock messages, so simulation time does not advance and rate.sleep()
+            # would block forever. TODO: Figure out a better way to do this.
 
-        # Use persistent Gazebo Transport client (no subprocess) and retry until success
-        # Ensure world is unpaused so the request is processed promptly
-        # try:
-        #     gz_client.world_control(WORLD, pause=False, timeout_ms=10000)
-        # except Exception as exc:
-        #     self.get_logger().warning(f"world_control(unpause) failed before set_pose: {exc}")
-        #     raise exc
+        try:
+            gz_client.world_control(WORLD, pause=True, timeout_ms=10000)
+        except Exception as exc:
+            self.get_logger().warning(f"world_control(pause) failed before set_pose: {exc}")
+            raise exc
 
-        x, y, z = INITIAL_POSE
+        # Request dynamics reset so the quadcopter starts next episode with zero velocity.
+        # We do this before teleporting the pose so that the next physics step starts from rest.
+        try:
+            if self.reset_dynamics_client.service_is_ready():
+                req = Trigger.Request()
+                # Fire-and-forget; Gazebo plugin will zero velocities in its next PreUpdate
+                self.reset_dynamics_client.call_async(req)
+            else:
+                # Do not fail hard if unavailable; pose reset is still useful.
+                self.get_logger().warning(
+                    "reset_dynamics service not ready; skipping dynamics reset"
+                )
+            time.sleep(0.001)  # wait for the dynamics reset to be processed
+        except Exception as e:
+            raise RuntimeError(f"Failed to call reset_dynamics service: {e}")
+
+        # Randomize the initial pose
+        x_rand = np.random.uniform(-1.5, 1.5)
+        y_rand = np.random.uniform(-1.5, 1.5)
+        self.initial_pose = (x_rand, y_rand, 0.0)
+
+        x, y, z = self.initial_pose
         attempt = 0
         while True:
             attempt += 1
@@ -596,10 +641,18 @@ class Navigator(Node):
                     qz=0.0,
                     timeout_ms=10000,
                 )
+                time.sleep(0.001)
                 break
             except Exception as exc:
                 self.get_logger().warning(f"set_pose attempt {attempt} failed: {exc}")
                 # time.sleep(0.01)
+
+        # Unpause to advance simulation time. Remove this will hang the ROS time-based sleeps.
+        try:
+            gz_client.world_control(WORLD, pause=False, timeout_ms=10000)
+        except Exception as exc:
+            self.get_logger().warning(f"world_control(unpause) failed after set_pose: {exc}")
+            raise exc
 
     def controller_step(self):
         """Low-level control loop: compute motor speeds and publish to /X3/ros/motor_speed."""
@@ -628,10 +681,35 @@ class Navigator(Node):
         self.latest_image = None
         self.latest_cam_pose = None
         self.latest_ball_state.reset()
-        self.latest_gt_odom = None
-        self.latest_desired_odom = None
+        # NOTE: We keep latest_gt_odom to allow immediate cmd_odom computation
+        # TODO: find a cleaner way to do this.
+        # self.latest_gt_odom = None
+        # Clear desired odom but create and publish a new one immediately
+        # self.latest_desired_odom = None
         self.flying_linvel_x = 0.0
         self.flying_linvel_y = 0.0
+
+        odom = Odometry()
+        odom.header.stamp = self.get_clock().now().to_msg()
+        odom.header.frame_id = "/X3/odom"
+        odom.child_frame_id = "/X3/base_footprint"
+        odom.pose.pose = Pose()
+        odom.pose.pose.position.x = self.initial_pose[0]
+        odom.pose.pose.position.y = self.initial_pose[1]
+        odom.pose.pose.position.z = self.initial_pose[2]
+        odom.pose.pose.orientation.x = 0.0
+        odom.pose.pose.orientation.y = 0.0
+        odom.pose.pose.orientation.z = 0.0
+        odom.pose.pose.orientation.w = 1.0
+        odom.twist.twist.linear.x = 0.0
+        odom.twist.twist.linear.y = 0.0
+        odom.twist.twist.linear.z = 0.0
+        odom.twist.twist.angular.x = 0.0
+        odom.twist.twist.angular.y = 0.0
+        odom.twist.twist.angular.z = 0.0
+        self.latest_desired_odom = odom
+        self.cmd_odom_publisher.publish(self.latest_desired_odom)
+        # self.get_logger().info("Published initial cmd_odom after reset")
 
     def camera_info_callback(self, msg: CameraInfo):
         """Callback for camera info messages"""

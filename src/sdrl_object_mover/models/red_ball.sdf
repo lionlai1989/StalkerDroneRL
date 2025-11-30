@@ -21,13 +21,10 @@
           <izz>0.0045</izz>
         </inertia>
       </inertial>
-      <collision name="collision">
-        <geometry>
-          <sphere>
-            <radius>0.15</radius>
-          </sphere>
-        </geometry>
-      </collision>
+      <!-- <collision name="collision">
+        Do not add collision geometry to the ball. The drone will collide with the ball during RL
+        training, which will cause the ball to stop moving.
+      </collision> -->
       <visual name="visual">
         <geometry>
           <sphere>

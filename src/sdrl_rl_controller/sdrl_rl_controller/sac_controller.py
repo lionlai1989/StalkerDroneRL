@@ -1,0 +1,113 @@
+import math
+import numpy as np
+from stable_baselines3 import SAC
+from sdrl_geometric_controller.transform import quat_to_rotmat, quat_to_euler, roll_pitch_to_tilt
+from sdrl_geometric_controller.motor_mixing import wrench_to_motor_speeds
+from sdrl_geometric_controller.quadcopter_params import QuadcopterParams
+from sdrl_rl_controller.observation_state_action import (
+    compute_tracking_error,
+    action_to_wrench,
+)
+
+# Constants
+MAX_POS_ERR = 5.0
+MAX_VEL_ERR = 3.0
+MAX_ANG_VEL = 6.28
+
+
+class SacController:
+    def __init__(self, model_path: str):
+        self.model = SAC.load(model_path)
+        # QuadcopterParams is used to:
+        # 1. Get the wrench limits
+        # 2. Convert normalized actions to motor speeds via wrench
+        self.drone_params = QuadcopterParams()
+        self.wrench_limits = {
+            "force_z": self.drone_params.force_z_limit,
+            "torque_x": self.drone_params.torque_x_limit,
+            "torque_y": self.drone_params.torque_y_limit,
+            "torque_z": self.drone_params.torque_z_limit,
+        }
+
+    def compute_motor_speeds(
+        self,
+        current_pose,
+        current_twist,
+        desired_pose,
+        desired_twist,
+    ) -> np.ndarray:
+        # Compute observation
+        dx, dy, dz, dvx, dvy, dvz, roll, pitch, yaw, p, q, r = compute_tracking_error(
+            current_pose, current_twist, desired_pose, desired_twist
+        )
+        # dx, dy, dz, dvx, dvy, dvz, roll, pitch, yaw, p, q, r = self._compute_error(
+        #     current_pose, current_twist, desired_pose, desired_twist
+        # )
+
+        x_err_n = np.clip(dx / MAX_POS_ERR, -1.0, 1.0)
+        y_err_n = np.clip(dy / MAX_POS_ERR, -1.0, 1.0)
+        z_err_n = np.clip(dz / MAX_POS_ERR, -1.0, 1.0)
+
+        vx_err_n = np.clip(dvx / MAX_VEL_ERR, -1.0, 1.0)
+        vy_err_n = np.clip(dvy / MAX_VEL_ERR, -1.0, 1.0)
+        vz_err_n = np.clip(dvz / MAX_VEL_ERR, -1.0, 1.0)
+
+        # NOTE: it may have singularity problem
+        # Roll is [-pi, pi] -> [-1, 1]
+        roll_n = np.clip(roll / math.pi, -1.0, 1.0)
+        # Pitch is [-pi/2, pi/2] -> [-1, 1]
+        pitch_n = np.clip(pitch / (math.pi / 2.0), -1.0, 1.0)
+
+        p_n = np.clip(p / MAX_ANG_VEL, -1.0, 1.0)
+        q_n = np.clip(q / MAX_ANG_VEL, -1.0, 1.0)
+        r_n = np.clip(r / MAX_ANG_VEL, -1.0, 1.0)
+
+        obs = np.array(
+            [
+                x_err_n,
+                y_err_n,
+                z_err_n,
+                vx_err_n,
+                vy_err_n,
+                vz_err_n,
+                roll_n,
+                pitch_n,
+                p_n,
+                q_n,
+                r_n,
+            ],
+            dtype=np.float32,
+        )
+
+        # Predict action
+        action, _ = self.model.predict(obs, deterministic=True)
+
+        # Convert to motor speeds
+        return self._action_to_motors(action)
+
+    def _action_to_motors(self, action: np.ndarray) -> np.ndarray:
+        """Convert normalized actions to motor speeds via wrench.
+        In this implementation, we do not use expert control signal for residual learning. If we use
+        expert control signal, the initial reward/return will be very high, and no matter what
+        the agent does, it will never be higher than the initial reward/return which results in
+        the agent never learning to explore.
+
+        """
+        force_rl, torque_rl = action_to_wrench(
+            action, self.wrench_limits, self.drone_params.hover_thrust
+        )
+        # force_rl, torque_rl = self.action_to_wrench(action)
+
+        force_total = force_rl
+        torque_total = torque_rl
+
+        motor_speeds = wrench_to_motor_speeds(
+            force_total,
+            torque_total,
+            self.drone_params.rotor_positions,
+            self.drone_params.rotor_cf,
+            self.drone_params.rotor_cd,
+            self.drone_params.yaw_signs,
+            self.drone_params.motor_max_rot_velocity,
+        )
+        return motor_speeds
