@@ -25,16 +25,21 @@ develop entirely inside a dev container with VS Code.
 Run these commands inside the container shell:
 
 ```bash
-source /opt/ros/humble/setup.bash
-colcon build --symlink-install --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-source ./install/setup.bash
+source /opt/ros/humble/setup.bash \
+&& colcon build --symlink-install --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+&& source ./install/setup.bash
 ```
 
-Launch StalkerDrone (Gazebo + RViz + Navigator):
+Launch StalkerDroneRL:
 
 ```bash
+# Geometric Controller
 ros2 launch sdrl_bringup stalker_drone_launch.py \
   use_rviz:=true use_gui:=true ball_speed:=1.0 ball_trajectory:=circle control_mode:=geometric
+
+# SAC Controller
+ros2 launch sdrl_bringup stalker_drone_launch.py \
+  use_rviz:=true use_gui:=true ball_speed:=0.3 ball_trajectory:=circle control_mode:=rl
 ```
 
 Key launch arguments (`sdrl_bringup/launch/stalker_drone_launch.py`):
@@ -42,7 +47,29 @@ Key launch arguments (`sdrl_bringup/launch/stalker_drone_launch.py`):
 - `use_rviz` (true|false): start RViz with preset config
 - `ball_speed`: (m/s)
 - `ball_trajectory` (circle|random)
-- `control_mode` (geometric|rl)
+- `control_mode` (geometric|rl|rl_train)
+
+---
+
+## Training the SAC Controller
+
+This section details the training process for the Soft Actor-Critic (SAC) reinforcement learning
+controller, designed to replace the traditional geometric controller.
+
+To train the SAC agent, execute the following command:
+
+```bash
+source /opt/ros/humble/setup.bash \
+&& colcon build --symlink-install --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+&& source ./install/setup.bash \
+&& ros2 launch sdrl_bringup train_sac_launch.py \
+  use_rviz:=false use_gui:=false ball_speed:=0.3 ball_trajectory:=circle control_mode:=rl_train
+```
+
+You can monitor training metrics in real-time using TensorBoard:
+```bash
+tensorboard --logdir ./tb_logs
+```
 
 ---
 

@@ -130,6 +130,10 @@ def compute_normalized_observation(dx, dy, dz, dvx, dvy, dvz, roll, pitch, p, q,
 def action_to_wrench(action, wrench_limits, hover_thrust):
     """
     Map normalized action [-1,1]^4 to wrench based on the wrench limits.
+    action[0]: is the normalized force z
+    action[1]: is the normalized torque x
+    action[2]: is the normalized torque y
+    action[3]: is the normalized torque z
     """
     assert action.shape == (4,), f"Invalid action shape: {action.shape}"
     assert np.all((action >= -1.0) & (action <= 1.0)), f"Invalid action values: {action}"
@@ -139,40 +143,21 @@ def action_to_wrench(action, wrench_limits, hover_thrust):
     ty_min, ty_max = wrench_limits["torque_y"]
     tz_min, tz_max = wrench_limits["torque_z"]
 
-    F_hover = hover_thrust
-
-    # Calculate scaling factors for the asymmetric map:
-    S_pos = fz_max - F_hover  # Max upward reserve (e.g., 21.88 - 15.115 = 6.765 N)
-    S_neg = F_hover - fz_min  # Max downward reserve (e.g., 15.115 - 0.0 = 15.115 N)
-
-    # Calculate Force Z (Fz) using piecewise mapping:
     if action[0] >= 0:
-        # Positive Deviation (a_z in  maps to Fz in [F_hover, F_max])
-        # Fz = F_hover + (Upward Reserve) * a_z
-        force_z = F_hover + S_pos * action[0]
+        force_z = hover_thrust + (fz_max - hover_thrust) * action[0]
     else:
-        # Negative Deviation (a_z in [-1, 0] maps to Fz in [F_min, F_hover])
-        # Fz = F_hover + (Downward Reserve) * a_z
-        # Since S_neg is positive and a_z is negative, this correctly subtracts force.
-        force_z = F_hover + S_neg * action[0]
+        force_z = hover_thrust + (hover_thrust - fz_min) * action[0]
 
-    # Apply final numerical clipping as a safety measure
-    force_z = np.clip(force_z, fz_min, fz_max)
-
-    # Torques are typically naturally centered at 0, so symmetric mapping is fine.
     def map_to_range_symmetric(a: float, v_min: float, v_max: float) -> float:
         """Map a in [-1, 1] to [v_min, v_max] linearly, centered at (v_min+v_max)/2."""
-        a_clipped = np.clip(a, -1.0, 1.0)
         center = 0.5 * (v_max + v_min)
         half_range = 0.5 * (v_max - v_min)
-        return center + half_range * a_clipped
+        return center + half_range * a
 
-    # Note: We use action[1], action[2], action[3] for torques
     torque_x = map_to_range_symmetric(action[1], tx_min, tx_max)
     torque_y = map_to_range_symmetric(action[2], ty_min, ty_max)
     torque_z = map_to_range_symmetric(action[3], tz_min, tz_max)
 
-    # Compile results
     torque = np.array([torque_x, torque_y, torque_z], dtype=np.float32)
 
     return force_z, torque

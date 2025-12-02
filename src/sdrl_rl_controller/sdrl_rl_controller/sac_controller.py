@@ -6,13 +6,9 @@ from sdrl_geometric_controller.motor_mixing import wrench_to_motor_speeds
 from sdrl_geometric_controller.quadcopter_params import QuadcopterParams
 from sdrl_rl_controller.observation_state_action import (
     compute_tracking_error,
+    compute_normalized_observation,
     action_to_wrench,
 )
-
-# Constants
-MAX_POS_ERR = 5.0
-MAX_VEL_ERR = 3.0
-MAX_ANG_VEL = 6.28
 
 
 class SacController:
@@ -40,44 +36,8 @@ class SacController:
         dx, dy, dz, dvx, dvy, dvz, roll, pitch, yaw, p, q, r = compute_tracking_error(
             current_pose, current_twist, desired_pose, desired_twist
         )
-        # dx, dy, dz, dvx, dvy, dvz, roll, pitch, yaw, p, q, r = self._compute_error(
-        #     current_pose, current_twist, desired_pose, desired_twist
-        # )
 
-        x_err_n = np.clip(dx / MAX_POS_ERR, -1.0, 1.0)
-        y_err_n = np.clip(dy / MAX_POS_ERR, -1.0, 1.0)
-        z_err_n = np.clip(dz / MAX_POS_ERR, -1.0, 1.0)
-
-        vx_err_n = np.clip(dvx / MAX_VEL_ERR, -1.0, 1.0)
-        vy_err_n = np.clip(dvy / MAX_VEL_ERR, -1.0, 1.0)
-        vz_err_n = np.clip(dvz / MAX_VEL_ERR, -1.0, 1.0)
-
-        # NOTE: it may have singularity problem
-        # Roll is [-pi, pi] -> [-1, 1]
-        roll_n = np.clip(roll / math.pi, -1.0, 1.0)
-        # Pitch is [-pi/2, pi/2] -> [-1, 1]
-        pitch_n = np.clip(pitch / (math.pi / 2.0), -1.0, 1.0)
-
-        p_n = np.clip(p / MAX_ANG_VEL, -1.0, 1.0)
-        q_n = np.clip(q / MAX_ANG_VEL, -1.0, 1.0)
-        r_n = np.clip(r / MAX_ANG_VEL, -1.0, 1.0)
-
-        obs = np.array(
-            [
-                x_err_n,
-                y_err_n,
-                z_err_n,
-                vx_err_n,
-                vy_err_n,
-                vz_err_n,
-                roll_n,
-                pitch_n,
-                p_n,
-                q_n,
-                r_n,
-            ],
-            dtype=np.float32,
-        )
+        obs = compute_normalized_observation(dx, dy, dz, dvx, dvy, dvz, roll, pitch, p, q, r)
 
         # Predict action
         action, _ = self.model.predict(obs, deterministic=True)
@@ -96,7 +56,6 @@ class SacController:
         force_rl, torque_rl = action_to_wrench(
             action, self.wrench_limits, self.drone_params.hover_thrust
         )
-        # force_rl, torque_rl = self.action_to_wrench(action)
 
         force_total = force_rl
         torque_total = torque_rl

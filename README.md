@@ -1,7 +1,8 @@
-# StalkerDroneRL - ROS 2 + Gazebo Drone Simulation
+# StalkerDroneRL - ROS 2 + Gazebo + Gymnasium + Stable Baselines3 Drone Simulation
 
-**StalkerDroneRL** is a fully containerized ROS 2 + Gazebo project that simulates a quadcopter
-*stalking a red ball*.
+**StalkerDroneRL** is a fully containerized **ROS 2** + **Gazebo** project that simulates a quadcopter
+*stalking a red ball*, utilizing a deep reinforcement learning controller powered by **Gymnasium**
+and **Stable Baselines3**.
 
 [Watch demo](https://github.com/user-attachments/assets/a0ed7a53-b3c4-4faa-8ca0-1d236d85ee02)
 
@@ -9,15 +10,16 @@
 
 ## Highlights
 
-- **ROS 2 Humble + Gazebo Harmonic** — uses recent, long-term support versions.
+- **ROS 2 Humble + Gazebo Harmonic + Gymnasium + Stable Baselines3 ** — The entire software stack uses
+  recent, long-term support versions. It is the perfect demo project illustrating how to integrate
+  these four open-source frameworks.
 
 - **Containerized environment** — I went through the *installation hell* of ROS 2 and
   Gazebo so you don't have to. During development, all you need is VS Code. For deployment, just run
   `docker compose up` and everything just works.
 
-- **Everything built from scratch** — all algorithms here are built from scratch, ranging from the geometric
-  controller (which output low-level motor speed commands) to object detection. This is not a "just tune
-  some PID gains" project.
+- **Everything built from scratch** — all algorithms here are implemented from scratch, ranging from the geometric
+  controller, perception, tracking, and navigation, to the training and deployment of the RL-based controller.
 
 - **Generic and modular** — the drone, camera, and sensor components come directly from [Open
   Robotics](https://www.openrobotics.org/). You can tweak parameters like mass, inertia, rotor
@@ -51,8 +53,8 @@ src/
 
 - **sdrl_perception**: A simple object detection package for the red ball.
 
-- **sdrl_rl_controller**: Reinforcement learning package that trains an RL‑based controller. This is
-  a work in progress.
+- **sdrl_rl_controller**: A Reinforcement Learning package that implements the Gymnasium environment
+  and trains the drone controller using Stable Baselines3. 
 
 ---
 
@@ -73,13 +75,26 @@ docker compose up -d dev
 docker exec -it stalkerdronerl_dev bash
 ```
 
-4. Launch the StalkerDrone with the geometric controller
+4. Launch the StalkerDroneRL with the geometric controller or Soft Actor-Critic (SAC) controller.
+
+The default SAC model can be downloaded from the
+[link](https://drive.google.com/file/d/1wHCf7Fkoc3zCc1ft2Urj3eVZOVITnhos/view?usp=sharing). The SAC
+model needs to be placed at the root folder of this project `StalkerDroneRL`.
+
 ```bash
+# Geometric controller
 source /opt/ros/humble/setup.bash \
 && colcon build --symlink-install --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 && source "./install/setup.bash" \
 && ros2 launch sdrl_bringup stalker_drone_launch.py \
   use_rviz:=true use_gui:=true ball_speed:=1.0 ball_trajectory:=circle control_mode:=geometric
+
+# SAC controller
+source /opt/ros/humble/setup.bash \
+&& colcon build --symlink-install --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+&& source "./install/setup.bash" \
+&& ros2 launch sdrl_bringup stalker_drone_launch.py \
+ use_rviz:=true use_gui:=true ball_speed:=0.5 ball_trajectory:=circle control_mode:=rl
 ```
 
 If everything goes well, you should see Gazebo and RViz launch, as shown at the beginning of this
@@ -115,7 +130,14 @@ Materials used during development and recommended reading.
 
 ### Deep Reinforcement Learning and Control
 - [CS 285: Deep Reinforcement Learning (UC Berkeley)](https://www.youtube.com/playlist?list=PL_iWQOsE6TfVYGEGiAOMaOzzv41Jfm_Ps)
-
+- Haarnoja, Tuomas, et al. "Soft actor-critic algorithms and applications." arXiv preprint arXiv:1812.05905 (2018).
+- Haarnoja, Tuomas, et al. "Soft actor-critic: Off-policy maximum entropy deep reinforcement learning with a stochastic actor." International conference on machine learning. Pmlr, 2018.
+- Schulman, John, et al. "Proximal policy optimization algorithms." arXiv preprint arXiv:1707.06347 (2017).
+- Hwangbo, Jemin, et al. "Control of a quadrotor with reinforcement learning." IEEE Robotics and Automation Letters 2.4 (2017): 2096-2103.
+- Johannink, Tobias, et al. "Residual reinforcement learning for robot control." 2019 international conference on robotics and automation (ICRA). IEEE, 2019.
+- Lambert, Nathan O., et al. "Low-level control of a quadrotor with deep model-based reinforcement learning." IEEE Robotics and Automation Letters 4.4 (2019): 4224-4230.
+- Molchanov, Artem, et al. "Sim-to-(multi)-real: Transfer of low-level robust control policies to multiple quadrotors." 2019 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS). IEEE, 2019.
+- Kaufmann, Elia, Leonard Bauersfeld, and Davide Scaramuzza. "A benchmark comparison of learned control policies for agile quadrotor flight." 2022 International Conference on Robotics and Automation (ICRA). IEEE, 2022.
 
 ---
 

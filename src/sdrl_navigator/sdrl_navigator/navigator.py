@@ -175,7 +175,7 @@ class NaviStateMachine:
                 return
 
             # Check if the drone has reached the cruising altitude
-            if abs(curr_pos.z - self.cruising_altitude) < 0.5:
+            if abs(curr_pos.z - self.cruising_altitude) < 1:  # 0.5
                 self.state = "FLYING"
             return
 
@@ -305,7 +305,7 @@ class Navigator(Node):
             self.get_logger().info("Initializing geometric controller")
             self.controller = GeometricController()
         elif self.control_mode == "rl":
-            rl_model_path = Path("/home/lion/StalkerDroneRL/checkpoints/sac_quadcopter_final.zip")
+            rl_model_path = Path("/home/lion/StalkerDroneRL/sac_quadcopter_final.zip")
             self.get_logger().info(f"Initializing RL controller with model: {rl_model_path}")
             self.controller = SacController(model_path=str(rl_model_path))
         elif self.control_mode == "rl_train":

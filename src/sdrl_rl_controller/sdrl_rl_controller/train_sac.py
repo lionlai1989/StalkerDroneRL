@@ -10,7 +10,6 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
 
 import gymnasium as gym
 import numpy as np
@@ -40,9 +39,13 @@ except ModuleNotFoundError:
     from gz.msgs10.world_control_pb2 import WorldControl
 
 from sdrl_geometric_controller.quadcopter_params import QuadcopterParams
-from sdrl_geometric_controller.transform import quat_to_rotmat, quat_to_euler, roll_pitch_to_tilt
+from sdrl_geometric_controller.transform import roll_pitch_to_tilt
 from sdrl_geometric_controller.motor_mixing import wrench_to_motor_speeds
-
+from sdrl_rl_controller.observation_state_action import (
+    action_to_wrench,
+    compute_normalized_observation,
+    compute_tracking_error,
+)
 
 WORLD_NAME = "ground_plane_world"
 _GZ_NODE = gz_transport.Node()
@@ -76,10 +79,7 @@ def world_control(
 
 GRAVITY = 9.81
 MAX_POS_DIST = 9.0  # 9**2 ~= 5**2 + 5**2 + 5**2
-MAX_POS_ERR = 5.0
 MAX_VEL_DIST = 5.0  # 5**2 ~= 3**2 + 3**2 + 3**2
-MAX_VEL_ERR = 3.0
-MAX_ANG_VEL = 6.28  # 2π rad/s ~= 360 deg/s
 
 
 class QuadcopterTrackingEnv(gym.Env):
@@ -142,7 +142,7 @@ class QuadcopterTrackingEnv(gym.Env):
             "pos_dist_penalty": -0.0388,
             "vel_dist_penalty": -0.007,
             "progress_reward": 1.0,
-            "danger_zone_tilt": math.pi / 6,  # 6, 7, 8, 9
+            "danger_zone_tilt": math.pi / 6,
             "tilt_penalty": -0.5,
             "success_reward": 5.0,
             "crash_penalty": -10.0,
@@ -268,104 +268,6 @@ class QuadcopterTrackingEnv(gym.Env):
 
             time.sleep(0.0005)  # 0.5ms wall-clock sleep to yield
 
-    def _compute_error(self) -> np.ndarray:
-        """Compute observation error vector without normalization."""
-        with self.odom_lock:
-            # Snapshot the references to ensure consistency
-            gt_odom = self.gt_odom
-            cmd_odom = self.cmd_odom
-
-        assert gt_odom is not None and cmd_odom is not None
-        gt_pos = gt_odom.pose.pose.position
-        cmd_pos = cmd_odom.pose.pose.position
-        gt_wxyz = gt_odom.pose.pose.orientation
-
-        # Position error (World Frame)
-        dx_w = cmd_pos.x - gt_pos.x
-        dy_w = cmd_pos.y - gt_pos.y
-        dz_w = cmd_pos.z - gt_pos.z
-
-        # Velocity error (World Frame)
-        gt_v = gt_odom.twist.twist.linear
-        cmd_v = cmd_odom.twist.twist.linear
-        dvx_w = cmd_v.x - gt_v.x
-        dvy_w = cmd_v.y - gt_v.y
-        dvz_w = cmd_v.z - gt_v.z
-
-        # Drone's rotating motion wrt world frame. R is Rotation of Body w.r.t World
-        rotmat = quat_to_rotmat(gt_wxyz.w, gt_wxyz.x, gt_wxyz.y, gt_wxyz.z)
-
-        # Rotate errors from world frame to body frame.
-        # err_body = R.T @ err_world.
-        pos_err_w = np.array([dx_w, dy_w, dz_w])
-        vel_err_w = np.array([dvx_w, dvy_w, dvz_w])
-        pos_err_b = rotmat.T @ pos_err_w
-        vel_err_b = rotmat.T @ vel_err_w
-
-        dx, dy, dz = pos_err_b
-        dvx, dvy, dvz = vel_err_b
-
-        # Since the desired angular velocity is always (0, 0, 0) (check `navigator.py`),
-        # the angular velocity error is effectively (0 - p, 0 - q, 0 - r).
-        # We use the raw angular velocity in Body Frame as it contains the same information.
-        ang_vel = gt_odom.twist.twist.angular
-
-        # The desired roll and pitch are 0 (level flight), so these act as errors.
-        # Yaw is calculated but not used in the state vector.
-        roll, pitch, yaw = quat_to_euler(
-            gt_wxyz.w,
-            gt_wxyz.x,
-            gt_wxyz.y,
-            gt_wxyz.z,
-        )
-
-        return dx, dy, dz, dvx, dvy, dvz, roll, pitch, yaw, ang_vel.x, ang_vel.y, ang_vel.z
-
-    def _compute_normalized_state(
-        self, dx, dy, dz, dvx, dvy, dvz, roll, pitch, p, q, r
-    ) -> np.ndarray:
-        """Compute normalized state vector."""
-
-        # Normalize position error
-        x_err_n = np.clip(dx / MAX_POS_ERR, -1.0, 1.0)
-        y_err_n = np.clip(dy / MAX_POS_ERR, -1.0, 1.0)
-        z_err_n = np.clip(dz / MAX_POS_ERR, -1.0, 1.0)
-
-        # Normalize velocity error
-        vx_err_n = np.clip(dvx / MAX_VEL_ERR, -1.0, 1.0)
-        vy_err_n = np.clip(dvy / MAX_VEL_ERR, -1.0, 1.0)
-        vz_err_n = np.clip(dvz / MAX_VEL_ERR, -1.0, 1.0)
-
-        # NOTE: it may have the singularity problem
-        # Roll is [-pi, pi] -> [-1, 1]
-        roll_n = np.clip(roll / math.pi, -1.0, 1.0)
-        # Pitch is [-pi/2, pi/2] -> [-1, 1]
-        pitch_n = np.clip(pitch / (math.pi / 2.0), -1.0, 1.0)
-
-        # Angular velocity
-        p_n = np.clip(p / MAX_ANG_VEL, -1.0, 1.0)
-        q_n = np.clip(q / MAX_ANG_VEL, -1.0, 1.0)
-        r_n = np.clip(r / MAX_ANG_VEL, -1.0, 1.0)
-
-        state = np.array(
-            [
-                x_err_n,
-                y_err_n,
-                z_err_n,
-                vx_err_n,
-                vy_err_n,
-                vz_err_n,
-                roll_n,
-                pitch_n,
-                p_n,
-                q_n,
-                r_n,
-            ],
-            dtype=np.float32,
-        )
-
-        return state
-
     def compute_reward(self, pos_dist, vel_dist, tilt, success, crash) -> float:
         """Compute reward."""
 
@@ -406,7 +308,9 @@ class QuadcopterTrackingEnv(gym.Env):
         initial state (random state) is the better state. By doing this, SAC will never learn to explore.
         """
 
-        force_rl, torque_rl = self.action_to_wrench(action)
+        force_rl, torque_rl = action_to_wrench(
+            action, self.wrench_limits, self.drone_params.hover_thrust
+        )
 
         force_total = force_rl
         torque_total = torque_rl
@@ -421,54 +325,6 @@ class QuadcopterTrackingEnv(gym.Env):
             self.drone_params.motor_max_rot_velocity,
         )
         return motor_speeds
-
-    def action_to_wrench(self, action: np.ndarray) -> tuple[float, np.ndarray]:
-        """Map normalized action [-1,1]^4 to wrench based on the wrench limits."""
-        assert action.shape == (4,), f"Invalid action shape: {action.shape}"
-        assert np.all((action >= -1.0) & (action <= 1.0)), f"Invalid action values: {action}"
-
-        fz_min, fz_max = self.wrench_limits["force_z"]
-        tx_min, tx_max = self.wrench_limits["torque_x"]
-        ty_min, ty_max = self.wrench_limits["torque_y"]
-        tz_min, tz_max = self.wrench_limits["torque_z"]
-
-        F_hover = self.drone_params.hover_thrust
-
-        # Calculate scaling factors for the asymmetric map:
-        S_pos = fz_max - F_hover  # Max upward reserve (e.g., 21.88 - 15.115 = 6.765 N)
-        S_neg = F_hover - fz_min  # Max downward reserve (e.g., 15.115 - 0.0 = 15.115 N)
-
-        # Calculate Force Z (Fz) using piecewise mapping:
-        if action[0] >= 0:
-            # Positive Deviation (a_z in  maps to Fz in [F_hover, F_max])
-            # Fz = F_hover + (Upward Reserve) * a_z
-            force_z = F_hover + S_pos * action[0]
-        else:
-            # Negative Deviation (a_z in [-1, 0] maps to Fz in [F_min, F_hover])
-            # Fz = F_hover + (Downward Reserve) * a_z
-            # Since S_neg is positive and a_z is negative, this correctly subtracts force.
-            force_z = F_hover + S_neg * action[0]
-
-        # Apply final numerical clipping as a safety measure
-        force_z = np.clip(force_z, fz_min, fz_max)
-
-        # Torques are typically naturally centered at 0, so symmetric mapping is fine.
-        def map_to_range_symmetric(a: float, v_min: float, v_max: float) -> float:
-            """Map a in [-1, 1] to [v_min, v_max] linearly, centered at (v_min+v_max)/2."""
-            a_clipped = np.clip(a, -1.0, 1.0)
-            center = 0.5 * (v_max + v_min)
-            half_range = 0.5 * (v_max - v_min)
-            return center + half_range * a_clipped
-
-        # Note: We use action[1], action[2], action[3] for torques
-        torque_x = map_to_range_symmetric(action[1], tx_min, tx_max)
-        torque_y = map_to_range_symmetric(action[2], ty_min, ty_max)
-        torque_z = map_to_range_symmetric(action[3], tz_min, tz_max)
-
-        # Compile results
-        torque = np.array([torque_x, torque_y, torque_z], dtype=np.float32)
-
-        return force_z, torque
 
     def get_success_radius(self) -> float:
         """Calculate success radius based on curriculum progress."""
@@ -536,7 +392,15 @@ class QuadcopterTrackingEnv(gym.Env):
         self._wait_for_odom(target_time_ns)
 
         # Compute error without normalization
-        dx, dy, dz, dvx, dvy, dvz, roll, pitch, _, p, q, r = self._compute_error()
+        with self.odom_lock:
+            # Snapshot the references to ensure consistency. deepcopy?
+            gt_odom = self.gt_odom
+            cmd_odom = self.cmd_odom
+            assert gt_odom is not None and cmd_odom is not None
+        dx, dy, dz, dvx, dvy, dvz, roll, pitch, _, p, q, r = compute_tracking_error(
+            gt_odom.pose.pose, gt_odom.twist.twist, cmd_odom.pose.pose, cmd_odom.twist.twist
+        )
+
         pos_dist = min(math.sqrt(dx * dx + dy * dy + dz * dz), MAX_POS_DIST)
         vel_dist = min(math.sqrt(dvx * dvx + dvy * dvy + dvz * dvz), MAX_VEL_DIST)
         tilt = roll_pitch_to_tilt(roll, pitch)
@@ -605,9 +469,8 @@ class QuadcopterTrackingEnv(gym.Env):
             self.episode_stats["crash"] = crash
 
         # compute state with normalization
-        state = self._compute_normalized_state(dx, dy, dz, dvx, dvy, dvz, roll, pitch, p, q, r)
-
-        return state, reward, terminated, truncated, {"success": success, "crash": crash}
+        obs = compute_normalized_observation(dx, dy, dz, dvx, dvy, dvz, roll, pitch, p, q, r)
+        return obs, reward, terminated, truncated, {"success": success, "crash": crash}
 
     def reset(self, seed=None, options=None):
         """Reset environment to initial state."""
@@ -656,10 +519,16 @@ class QuadcopterTrackingEnv(gym.Env):
         # Pause physics
         world_control(WORLD_NAME, pause=True)
 
-        dx, dy, dz, dvx, dvy, dvz, roll, pitch, _, p, q, r = self._compute_error()
-        state = self._compute_normalized_state(dx, dy, dz, dvx, dvy, dvz, roll, pitch, p, q, r)
+        with self.odom_lock:
+            gt_odom = self.gt_odom
+            cmd_odom = self.cmd_odom
+            assert gt_odom is not None and cmd_odom is not None
+        dx, dy, dz, dvx, dvy, dvz, roll, pitch, _, p, q, r = compute_tracking_error(
+            gt_odom.pose.pose, gt_odom.twist.twist, cmd_odom.pose.pose, cmd_odom.twist.twist
+        )
+        obs = compute_normalized_observation(dx, dy, dz, dvx, dvy, dvz, roll, pitch, p, q, r)
 
-        return state, {}
+        return obs, {}
 
     def _request_reset(self, timeout_sec: float) -> bool:
         """Request navigator to reset drone position."""
@@ -690,10 +559,10 @@ class QuadcopterTrackingEnv(gym.Env):
 
     def close(self):
         """Clean up ROS2 resources."""
-        self.spin_thread.join()
-        self.node.destroy_node()
         if rclpy.ok():
-            rclpy.shutdown()
+            rclpy.shutdown()  # tell rclpy.spin() it's time to shutdown
+        self.spin_thread.join()  # wait for self.spin_thread to exit
+        self.node.destroy_node()  # destroy the node
 
 
 def create_training_parser():
