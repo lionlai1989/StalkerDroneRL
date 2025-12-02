@@ -10,7 +10,7 @@ and **Stable Baselines3**.
 
 ## Highlights
 
-- **ROS 2 Humble + Gazebo Harmonic + Gymnasium + Stable Baselines3 ** — The entire software stack uses
+- **ROS 2 Humble + Gazebo Harmonic + Gymnasium + Stable Baselines3** — The entire software stack uses
   recent, long-term support versions. It is the perfect demo project illustrating how to integrate
   these four open-source frameworks.
 
