@@ -47,6 +47,7 @@
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2_ros/transform_broadcaster.h>
+#include <thread>
 
 namespace sdrl {
 
@@ -101,6 +102,13 @@ class LionQuadcopter : public gz::sim::System,
     rclcpp::Node::SharedPtr ros_node{nullptr};
     rclcpp::CallbackGroup::SharedPtr callback_group{nullptr};
 
+    // Executor for running ROS node in a separate thread
+    rclcpp::executors::MultiThreadedExecutor::SharedPtr executor{nullptr};
+    std::thread executor_thread;
+
+    // Mutex to protect data shared between ROS callbacks and Gazebo loops
+    std::mutex ros_cmd_mutex;
+
     // Service to allow external nodes (e.g. Navigator) to request a dynamics reset
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_dynamics_service{nullptr};
 
@@ -139,7 +147,6 @@ class LionQuadcopter : public gz::sim::System,
 
     // motor command cache (from ROS topic)
     std::array<double, 4> ros_motor_speeds{0.0, 0.0, 0.0, 0.0};
-    bool ros_motor_cmd_available{false};
 
     /**
      * Teardown concurrency guard:

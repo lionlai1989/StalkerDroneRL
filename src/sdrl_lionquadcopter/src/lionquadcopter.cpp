@@ -69,6 +69,16 @@ LionQuadcopter::~LionQuadcopter() {
     this->pub_camera_pose.reset();
     this->callback_group.reset();
 
+    // Stop and join the executor thread
+    if (this->executor) {
+        // Cancel any running spin* function, causing it to return.
+        this->executor->cancel(); // access `cancel()` of the MultiThreadedExecutor instance
+    }
+    if (this->executor_thread.joinable()) {
+        this->executor_thread.join();
+    }
+    this->executor.reset();
+
     this->ros_node.reset();
 
     /**
@@ -158,6 +168,11 @@ void LionQuadcopter::Configure(const gz::sim::Entity &entity,
     if (!this->motor_pub) {
         throw std::runtime_error("Failed to advertise motor command topic");
     }
+
+    // Spin ROS node in a separate thread
+    this->executor = std::make_shared<rclcpp::executors::MultiThreadedExecutor>();
+    this->executor->add_node(this->ros_node);
+    this->executor_thread = std::thread([this]() { this->executor->spin(); });
 }
 
 /**
@@ -168,12 +183,6 @@ void LionQuadcopter::Configure(const gz::sim::Entity &entity,
 void LionQuadcopter::PreUpdate(const gz::sim::UpdateInfo &info,
                                gz::sim::EntityComponentManager &ecm) {
     (void)info;
-    // Process ROS callbacks
-    if (!this->shutting_down.load(std::memory_order_relaxed) && this->ros_node && rclcpp::ok()) {
-        // spin_some runs as long as it takes to execute all currently queued callbacks. It
-        // processes all pending ROS callbacks on this node, including /clock topic.
-        rclcpp::spin_some(this->ros_node);
-    }
 
     // Read ground truth pose. Use parent entity of model_entity. TODO: figure this shit out
     if (auto pose_model =
@@ -225,10 +234,13 @@ void LionQuadcopter::PreUpdate(const gz::sim::UpdateInfo &info,
     // this->pub_gt_pose->publish(gt_pose);
 
     // Forward latest ROS motor speeds to the MulticopterMotorModel
-    if (this->motor_pub && this->ros_motor_cmd_available) {
+    if (this->motor_pub) {
         gz::msgs::Actuators msg;
-        for (double w : this->ros_motor_speeds) {
-            msg.add_velocity(w);
+        {
+            std::lock_guard<std::mutex> lock(this->ros_cmd_mutex);
+            for (double w : this->ros_motor_speeds) {
+                msg.add_velocity(w);
+            }
         }
         this->motor_pub.Publish(msg);
     }
@@ -335,6 +347,8 @@ void LionQuadcopter::init_gz_subscribers(std::string image_topic, std::string ca
 }
 
 void LionQuadcopter::cb_cmd_odom(const nav_msgs::msg::Odometry::SharedPtr cmd) {
+    // Protect the access to cmd_pose and cmd_twist
+    std::lock_guard<std::mutex> lock(this->ros_cmd_mutex);
     // Copy desired pose
     this->cmd_pose = cmd->pose.pose;
     // Copy desired twist
@@ -343,11 +357,11 @@ void LionQuadcopter::cb_cmd_odom(const nav_msgs::msg::Odometry::SharedPtr cmd) {
 
 void LionQuadcopter::cb_ros_motor_cmd(const std_msgs::msg::Float32MultiArray::SharedPtr cmd) {
     if (cmd->data.size() >= 4) {
+        std::lock_guard<std::mutex> lock(this->ros_cmd_mutex);
         this->ros_motor_speeds[0] = static_cast<double>(cmd->data[0]);
         this->ros_motor_speeds[1] = static_cast<double>(cmd->data[1]);
         this->ros_motor_speeds[2] = static_cast<double>(cmd->data[2]);
         this->ros_motor_speeds[3] = static_cast<double>(cmd->data[3]);
-        this->ros_motor_cmd_available = true;
     }
 }
 
