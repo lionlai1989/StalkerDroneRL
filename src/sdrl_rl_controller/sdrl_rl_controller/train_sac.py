@@ -27,16 +27,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from std_msgs.msg import Float32MultiArray, String
 from std_srvs.srv import Trigger
 
-try:
-    # Preferred (unversioned) imports if available
-    import gz.transport as gz_transport
-    from gz.msgs.boolean_pb2 import Boolean
-    from gz.msgs.world_control_pb2 import WorldControl
-except ModuleNotFoundError:
-    # Harmonic Debian packages expose versioned subpackages
-    import gz.transport13 as gz_transport
-    from gz.msgs10.boolean_pb2 import Boolean
-    from gz.msgs10.world_control_pb2 import WorldControl
+from sdrl_rl_controller import gz_client
 
 from sdrl_geometric_controller.quadcopter_params import QuadcopterParams
 from sdrl_geometric_controller.transform import roll_pitch_to_tilt
@@ -48,33 +39,7 @@ from sdrl_rl_controller.observation_state_action import (
 )
 
 WORLD_NAME = "ground_plane_world"
-_GZ_NODE = gz_transport.Node()
-
-
-def _gz_request(service: str, req, timeout_ms: int) -> bool:
-    """Send a service request using whichever binding signature is available."""
-    # Preferred signature (gz.transport13): pass message types
-    res = _GZ_NODE.request(service, req, req.__class__, Boolean, int(timeout_ms))
-    # Some bindings return (ok, resp), others just resp (Boolean)
-    if isinstance(res, tuple):
-        ok, resp = res
-        return bool(ok and getattr(resp, "data", False))
-    return bool(getattr(res, "data", False))
-
-
-def world_control(
-    world: str, *, pause: bool | None = None, step_multi: int | None = None, timeout_ms: int = 10000
-) -> None:
-    req = WorldControl()
-    if pause is not None:
-        req.pause = bool(pause)
-    if step_multi is not None:
-        req.step = True
-        req.multi_step = int(step_multi)
-    if not _gz_request(f"/world/{world}/control", req, timeout_ms):
-        # raise RuntimeError("world_control failed")
-        # Do not raise error, just print warning because sometimes it fails but it actually works
-        print("world_control failed")
+QUADCOPTER_MODEL = "lion_quadcopter"
 
 
 GRAVITY = 9.81
@@ -229,7 +194,8 @@ class QuadcopterTrackingEnv(gym.Env):
         )
 
         # Reset service client
-        self.reset_cli = self.node.create_client(Trigger, "/X3/reset_drone_initial_pose")
+        self.reset_navigator_cli = self.node.create_client(Trigger, "/X3/reset_navigator")
+        self.reset_dynamics_cli = self.node.create_client(Trigger, "/X3/reset_dynamics")
 
         # Start ROS2 spinning in separate thread
         self.spin_thread = threading.Thread(target=rclpy.spin, args=(self.node,), daemon=True)
@@ -385,7 +351,7 @@ class QuadcopterTrackingEnv(gym.Env):
         # The physics runs at 1000 Hz. Control runs at 100 Hz.
         # We need to step 1000 / 100 = 10 physics steps.
         steps_to_take = 10
-        world_control(WORLD_NAME, step_multi=steps_to_take)  # non-blocking call
+        gz_client.world_control(WORLD_NAME, step_multi=steps_to_take)  # non-blocking call
 
         # Wait for physics update using explicit odom check instead of rate.sleep()
         # This ensures we don't compute reward on stale data.
@@ -517,7 +483,7 @@ class QuadcopterTrackingEnv(gym.Env):
             wait_rate.sleep()
 
         # Pause physics
-        world_control(WORLD_NAME, pause=True)
+        gz_client.world_control(WORLD_NAME, pause=True)
 
         with self.odom_lock:
             gt_odom = self.gt_odom
@@ -531,26 +497,63 @@ class QuadcopterTrackingEnv(gym.Env):
         return obs, {}
 
     def _request_reset(self, timeout_sec: float) -> bool:
-        """Request navigator to reset drone position."""
+        """
+        Execute reset sequence: Pause -> Reset Navigator -> Reset Dynamics -> Teleport -> Unpause
+        """
         try:
-            if not self.reset_cli.wait_for_service(timeout_sec=5.0):
-                raise RuntimeError("Reset service not available")
+            # Pause physics. /clock topic stops publishing new time values
+            gz_client.world_control(WORLD_NAME, pause=True)
 
-            req = Trigger.Request()
-            future = self.reset_cli.call_async(req)
+            # Reset Navigator internal state
+            if not self.reset_navigator_cli.wait_for_service(timeout_sec=5.0):
+                raise RuntimeError("Navigator reset service not available")
+            # We must use wall-clock waiting because sim time is paused
+            future_nav = self.reset_navigator_cli.call_async(Trigger.Request())
+            start_t = time.time()
+            while not future_nav.done():
+                if time.time() - start_t > 5.0:
+                    raise RuntimeError("Navigator reset timeout")
+                time.sleep(0.01)
+            if not future_nav.result().success:
+                raise RuntimeError(f"Navigator reset failed: {future_nav.result().message}")
 
-            # Wait for response using ROS time
-            start_time = self.node.get_clock().now()
-            wait_rate = self.node.create_rate(10)  # 10 Hz for waiting
-            while rclpy.ok() and not future.done():
-                elapsed = (self.node.get_clock().now() - start_time).nanoseconds / 1e9
-                if elapsed > timeout_sec:
-                    raise RuntimeError("Reset timeout")
-                wait_rate.sleep()
+            # Reset Dynamics (Zero Velocity)
+            if not self.reset_dynamics_cli.wait_for_service(timeout_sec=5.0):
+                raise RuntimeError("Dynamics reset service not available")
+            future_dyn = self.reset_dynamics_cli.call_async(Trigger.Request())
+            start_t = time.time()
+            while not future_dyn.done():
+                if time.time() - start_t > 5.0:
+                    raise RuntimeError("Dynamics reset timeout")
+                time.sleep(0.01)
+            if not future_dyn.result().success:
+                raise RuntimeError(f"Dynamics reset failed: {future_dyn.result().message}")
 
-            resp = future.result()
-            if resp is None or not resp.success:
-                raise RuntimeError("Reset failed")
+            # Zero motor speeds (Publish multiple times to ensure receipt)
+            zero_msg = Float32MultiArray()
+            zero_msg.data = [0.0, 0.0, 0.0, 0.0]
+            for _ in range(5):
+                self.motor_pub.publish(zero_msg)
+                time.sleep(0.005)
+
+            # Reset drone to random position
+            x_rand = np.random.uniform(-1.5, 1.5)
+            y_rand = np.random.uniform(-1.5, 1.5)
+            gz_client.set_pose(
+                WORLD_NAME,
+                QUADCOPTER_MODEL,
+                x=x_rand,
+                y=y_rand,
+                z=0.05,
+                qw=1.0,
+                qx=0.0,
+                qy=0.0,
+                qz=0.0,
+            )
+
+            # Unpause physics. why unpause? we want the whole sim to be paused, right?
+            gz_client.world_control(WORLD_NAME, pause=False)
+
             return True
 
         except Exception as e:

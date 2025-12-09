@@ -23,7 +23,6 @@ Here, I don't think state_machine_step should run as fast as synced_image_pose_c
 be enough to update the state machine and the command odometry.
 """
 
-import time
 import traceback
 from pathlib import Path
 from typing import Optional, Tuple
@@ -41,7 +40,6 @@ from std_msgs.msg import Float32MultiArray, String
 from std_srvs.srv import Trigger
 
 from sdrl_geometric_controller import GeometricController
-from sdrl_navigator import gz_client
 from sdrl_perception import (
     camera_info_to_intrinsics,
     compute_ray_from_pixel,
@@ -50,9 +48,6 @@ from sdrl_perception import (
 )
 from sdrl_rl_controller import SacController
 from sdrl_geometric_controller.transform import quat_to_euler, roll_pitch_to_tilt, euler_to_quat
-
-WORLD = "ground_plane_world"
-QUADCOPTER_MODEL = "lion_quadcopter"
 
 
 class BallState:
@@ -82,8 +77,11 @@ class BallState:
             self.prev_vel = np.zeros_like(pos, dtype=float)
             return
 
-        # Require strictly increasing timestamps
-        assert time_s > self.curr_time_s, "BallState.update requires strictly increasing time"
+        # Handle potential time jumps or duplicate messages
+        if time_s <= self.curr_time_s:
+            # This can happen if the clock jumps back or if we receive duplicate messages.
+            # We should skip the update to prevent division by zero or negative dt.
+            return
 
         # Shift current state to previous
         self.prev_pos = self.curr_pos
@@ -240,13 +238,10 @@ class Navigator(Node):
         )
         self.navi_state_publisher = self.create_publisher(String, "/X3/navi_state", qos_reliable)
 
-        # Service to allow external nodes (e.g., RL env) to request a reset to initial pose
+        # Service to allow external nodes (e.g., RL env) to request a reset of internal state
         self.reset_service = self.create_service(
-            Trigger, "/X3/reset_drone_initial_pose", self.handle_reset_service
+            Trigger, "/X3/reset_navigator", self.handle_reset_service
         )
-
-        # Client to request dynamics reset (zero linear and angular velocity) from Gazebo plugin
-        self.reset_dynamics_client = self.create_client(Trigger, "/X3/reset_dynamics")
 
         # Synchronized subscribers for image and camera pose using exact-time policy
         self.img_sub = Subscriber(
@@ -540,22 +535,14 @@ class Navigator(Node):
         self.cmd_odom_publisher.publish(self.latest_desired_odom)
 
     def handle_reset_service(self, request, response):
-        """Handle reset_drone_initial_pose service requests.
+        """Handle reset_navigator service requests.
 
-        Repositions the drone to its initial pose and resets internal navigator state.
+        Resets internal navigator state (state machine, ball state, etc).
         """
         try:
-            # self.get_logger().info("Received reset_drone_initial_pose request")
-            if self.navi_state_timer is not None and not self.navi_state_timer.is_canceled():
-                # self.get_logger().info("Stopping state machine timer")
-                self.destroy_timer(self.navi_state_timer)
-                self.navi_state_timer = None
-
-            self.reposition_drone_to_initial_pose()
             self.reset_navigator()
-
             response.success = True
-            response.message = "Reset to initial pose complete"
+            response.message = "Navigator internal state reset complete"
         except Exception as e:
             response.success = False
             response.message = f"Reset failed: {e}"
@@ -564,95 +551,7 @@ class Navigator(Node):
 
             # Re-raise the exception to stop the program. Reset must succeed before continuing.
             raise e
-        finally:
-            if self.navi_state_timer is None:
-                # self.get_logger().info("Restarting state machine timer")
-                self.navi_state_timer = self.create_timer(
-                    self.navi_state_timer_period, self.state_machine_step, clock=self.clock
-                )
         return response
-
-    def reposition_drone_to_initial_pose(self):
-        """Reposition the drone to its initial pose and zero motor speeds.
-
-        This avoids tearing down and recreating the model. We send a few zero-motor
-        commands to clear rotor state, then call Gazebo's set_pose service for
-        the model named "lion_quadcopter" in world "ground_plane_world".
-        """
-        # self.get_logger().info("Repositioning drone to initial pose")
-
-        # Publish zero motor speeds a few times to clear rotor state.
-        # We send multiple messages with a short delay so that:
-        # - the LionQuadcopter plugin reliably receives at least one zero‑command over several
-        #   simulation iterations
-        # - the MulticopterMotorModel has time to drive its internal rotor state toward zero thrust
-        #   before we teleport the drone with set_pose.
-        zero_msg = Float32MultiArray()
-        zero_msg.data = [0.0, 0.0, 0.0, 0.0]
-        for _ in range(3):
-            self.ros_motor_publisher.publish(zero_msg)
-            time.sleep(0.005)
-            # We cannot use self.create_rate(..., clock=self.clock) here because this code runs
-            # inside a service callback. While the callback is executing, the node's executor cannot
-            # process incoming /clock messages, so simulation time does not advance and rate.sleep()
-            # would block forever. TODO: Figure out a better way to do this.
-
-        try:
-            gz_client.world_control(WORLD, pause=True, timeout_ms=10000)
-        except Exception as exc:
-            self.get_logger().warning(f"world_control(pause) failed before set_pose: {exc}")
-            raise exc
-
-        # Request dynamics reset so the quadcopter starts next episode with zero velocity.
-        # We do this before teleporting the pose so that the next physics step starts from rest.
-        try:
-            if self.reset_dynamics_client.service_is_ready():
-                req = Trigger.Request()
-                # Fire-and-forget; Gazebo plugin will zero velocities in its next PreUpdate
-                self.reset_dynamics_client.call_async(req)
-            else:
-                # Do not fail hard if unavailable; pose reset is still useful.
-                self.get_logger().warning(
-                    "reset_dynamics service not ready; skipping dynamics reset"
-                )
-            time.sleep(0.001)  # wait for the dynamics reset to be processed
-        except Exception as e:
-            raise RuntimeError(f"Failed to call reset_dynamics service: {e}")
-
-        # Randomize the initial pose
-        x_rand = np.random.uniform(-1.5, 1.5)
-        y_rand = np.random.uniform(-1.5, 1.5)
-        self.initial_pose = (x_rand, y_rand, 0.0)
-
-        x, y, z = self.initial_pose
-        attempt = 0
-        while True:
-            attempt += 1
-            try:
-                gz_client.set_pose(
-                    WORLD,
-                    QUADCOPTER_MODEL,
-                    x=x,
-                    y=y,
-                    z=z,
-                    qw=1.0,
-                    qx=0.0,
-                    qy=0.0,
-                    qz=0.0,
-                    timeout_ms=10000,
-                )
-                time.sleep(0.001)
-                break
-            except Exception as exc:
-                self.get_logger().warning(f"set_pose attempt {attempt} failed: {exc}")
-                # time.sleep(0.01)
-
-        # Unpause to advance simulation time. Remove this will hang the ROS time-based sleeps.
-        try:
-            gz_client.world_control(WORLD, pause=False, timeout_ms=10000)
-        except Exception as exc:
-            self.get_logger().warning(f"world_control(unpause) failed after set_pose: {exc}")
-            raise exc
 
     def controller_step(self):
         """Low-level control loop: compute motor speeds and publish to /X3/ros/motor_speed."""
@@ -681,35 +580,13 @@ class Navigator(Node):
         self.latest_image = None
         self.latest_cam_pose = None
         self.latest_ball_state.reset()
-        # NOTE: We keep latest_gt_odom to allow immediate cmd_odom computation
-        # TODO: find a cleaner way to do this.
-        # self.latest_gt_odom = None
-        # Clear desired odom but create and publish a new one immediately
-        # self.latest_desired_odom = None
+
+        # Clear odometry so we don't act on stale data
+        self.latest_gt_odom = None
+        self.latest_desired_odom = None
+
         self.flying_linvel_x = 0.0
         self.flying_linvel_y = 0.0
-
-        odom = Odometry()
-        odom.header.stamp = self.get_clock().now().to_msg()
-        odom.header.frame_id = "/X3/odom"
-        odom.child_frame_id = "/X3/base_footprint"
-        odom.pose.pose = Pose()
-        odom.pose.pose.position.x = self.initial_pose[0]
-        odom.pose.pose.position.y = self.initial_pose[1]
-        odom.pose.pose.position.z = self.initial_pose[2]
-        odom.pose.pose.orientation.x = 0.0
-        odom.pose.pose.orientation.y = 0.0
-        odom.pose.pose.orientation.z = 0.0
-        odom.pose.pose.orientation.w = 1.0
-        odom.twist.twist.linear.x = 0.0
-        odom.twist.twist.linear.y = 0.0
-        odom.twist.twist.linear.z = 0.0
-        odom.twist.twist.angular.x = 0.0
-        odom.twist.twist.angular.y = 0.0
-        odom.twist.twist.angular.z = 0.0
-        self.latest_desired_odom = odom
-        self.cmd_odom_publisher.publish(self.latest_desired_odom)
-        # self.get_logger().info("Published initial cmd_odom after reset")
 
     def camera_info_callback(self, msg: CameraInfo):
         """Callback for camera info messages"""

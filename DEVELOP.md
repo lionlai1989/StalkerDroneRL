@@ -84,7 +84,7 @@ ROS 2 topics:
 - `/X3/ros_bottom_cam/pose` (geometry_msgs/PoseStamped): camera pose
 
 Service:
-- `/X3/reset_drone_initial_pose` (std_srvs/Trigger): resets the drone to its initial pose
+- `/X3/reset_navigator` (std_srvs/Trigger): resets the navigator internal state
 
 Gazebo services (examples):
 - `/world/ground_plane_world/create` (spawn entities)
@@ -105,7 +105,7 @@ gz topic -t /X3/gazebo/command/motor_speed --msgtype gz.msgs.Actuators -p 'veloc
 gz service -l | head
 gz service -i -s /world/ground_plane_world/control
 
-ros2 service call /X3/reset_drone_initial_pose std_srvs/srv/Trigger {}
+ros2 service call /X3/reset_navigator std_srvs/srv/Trigger {}
 ```
 
 ## Notes on environment variables
