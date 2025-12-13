@@ -92,8 +92,6 @@
       </plugin>
 
       <plugin name='sdrl::LionQuadcopter' filename='liblion_quadcopter_plugin.so'>
-        <namespace>/X3</namespace>
-
         <bodyName>base_footprint</bodyName>
       </plugin>
 
@@ -144,6 +142,7 @@
       </sensor>
     </link>
     <joint name="bottom_camera_mount" type="fixed">
+      <!-- Connect bottom_camera_link to the base_link in src/sdrl_lionquadcopter/models/x3_uav/model.sdf -->
       <parent>X3::X3/base_link</parent>
       <child>bottom_camera_link</child>
       <pose>0 0 0 0 0 0</pose>

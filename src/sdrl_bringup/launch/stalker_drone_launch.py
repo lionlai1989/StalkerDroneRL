@@ -216,7 +216,7 @@ def generate_launch_description():
             "--timeout",
             "3000",
             "--req",
-            f'sdf_filename: "{lion_sdf_path}" name: "lion_quadcopter" {lion_sdf_pose}',
+            f'sdf_filename: "{lion_sdf_path}" {lion_sdf_pose}',
         ],
         output="screen",
     )

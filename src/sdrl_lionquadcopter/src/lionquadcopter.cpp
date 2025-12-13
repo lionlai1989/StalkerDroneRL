@@ -105,27 +105,25 @@ void LionQuadcopter::Configure(const gz::sim::Entity &entity,
                                gz::sim::EntityComponentManager &ecm, gz::sim::EventManager &) {
     // sdf.get()->GetName() -> "plugin". Why is the name of the plugin "plugin"?
 
-    // Why is the entity happened to be "x3" drone model? why not ground plane? or sun?
+    // `this->model_entity` binds to "src/sdrl_lionquadcopter/models/x3_uav/model.sdf"
+    // `ecm.ParentEntity(this->model_entity)` binds to "lion_quadcopter.sdf"
     // Store the model entity; link and geometry will be resolved in load_drone_config
     // Use parent entity of the passed in argument entity to get pose
     // entity is just a number. It doesn't have any meaning. We should always use name.
-    // What should the parent entity be? ecm.ParentEntity(entity)
     this->model_entity = entity;
+    gz::sim::Model model(this->model_entity);
+    std::cout << "model_entity: " << this->model_entity << " " << model.Name(ecm) << std::endl;
+    // get parent of the model
+    gz::sim::Model parent_model(ecm.ParentEntity(this->model_entity));
+    std::cout << "parent model.Name(): " << parent_model.Name(ecm) << std::endl;
 
     // Initialize ROS context if not already initialized
     if (!rclcpp::ok()) {
         rclcpp::init(0, nullptr);
     }
 
-    // Create ROS node with namespace from SDF if provided, else default to /X3
-    std::string ns = "/X3";
-    if (sdf && sdf->HasElement("namespace")) {
-        ns = sdf->Get<std::string>("namespace");
-        if (ns.empty()) {
-            ns = "/X3";
-        }
-    }
-    this->ros_node = std::make_shared<rclcpp::Node>("lion_quadcopter", ns);
+    // Create ROS node. Node (const std::string &node_name, const std::string &namespace)
+    this->ros_node = std::make_shared<rclcpp::Node>("lionquadcopter", "/X3");
 
     // Follow Gazebo simulation time via the /clock topic.
     this->ros_node->set_parameter(rclcpp::Parameter("use_sim_time", true));
