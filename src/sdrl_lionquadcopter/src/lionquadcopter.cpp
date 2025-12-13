@@ -123,7 +123,7 @@ void LionQuadcopter::Configure(const gz::sim::Entity &entity,
     }
 
     // Create ROS node. Node (const std::string &node_name, const std::string &namespace)
-    this->ros_node = std::make_shared<rclcpp::Node>("lionquadcopter", "/X3");
+    this->ros_node = std::make_shared<rclcpp::Node>("lion_quadcopter", "/X3");
 
     // Follow Gazebo simulation time via the /clock topic.
     this->ros_node->set_parameter(rclcpp::Parameter("use_sim_time", true));
@@ -151,7 +151,7 @@ void LionQuadcopter::Configure(const gz::sim::Entity &entity,
     this->load_drone_config(sdf, ecm);
 
     // Tell Gazebo to generate velocity checks for the link
-    gz::sim::Link(this->baselink_entity).EnableVelocityChecks(ecm, true);
+    this->baselink_link.EnableVelocityChecks(ecm, true);
 
     // Fixed transformation (R + T) from drone base to camera frame.
     // The camera rotates 180 deg about Y axis to look towards -Z direction.
@@ -182,54 +182,20 @@ void LionQuadcopter::PreUpdate(const gz::sim::UpdateInfo &info,
                                gz::sim::EntityComponentManager &ecm) {
     (void)info;
 
-    // Read ground truth pose. Use parent entity of model_entity. TODO: figure this shit out
-    if (auto pose_model =
-            ecm.Component<gz::sim::components::Pose>(ecm.ParentEntity(this->model_entity))) {
-        std::lock_guard<std::mutex> lock(this->state_mutex);
-        this->gt_pose = pose_model->Data();
-    } else {
-        throw std::runtime_error("No pose found on model_entity");
-    }
-    // Read ground truth linear velocity
-    if (auto linvel_comp =
-            ecm.Component<gz::sim::components::LinearVelocity>(this->baselink_entity)) {
-        this->gt_linear_velocity = linvel_comp->Data();
-    } else {
-        throw std::runtime_error("No linear velocity found on baselink_entity");
-    }
-    // Read ground truth angular velocity
-    if (auto angvel_comp =
-            ecm.Component<gz::sim::components::AngularVelocity>(this->baselink_entity)) {
-        this->gt_angular_velocity = angvel_comp->Data();
-    } else {
-        throw std::runtime_error("No angular velocity found on model or link");
-    }
-
-    // Optionally zero dynamics when requested.
+    // Optionally zero dynamics when requested. TODO: the drone is still moving after reset.
     if (this->pending_reset_dynamics.load(std::memory_order_relaxed)) {
-        if (auto linvel_comp =
-                ecm.Component<gz::sim::components::LinearVelocity>(this->baselink_entity)) {
-            linvel_comp->Data().Set(0.0, 0.0, 0.0);
-            this->gt_linear_velocity.Set(0.0, 0.0, 0.0);
-        }
         if (auto angvel_comp =
                 ecm.Component<gz::sim::components::AngularVelocity>(this->baselink_entity)) {
             angvel_comp->Data().Set(0.0, 0.0, 0.0);
             this->gt_angular_velocity.Set(0.0, 0.0, 0.0);
         }
+        if (auto linvel_comp =
+                ecm.Component<gz::sim::components::LinearVelocity>(this->baselink_entity)) {
+            linvel_comp->Data().Set(0.0, 0.0, 0.0);
+            this->gt_linear_velocity.Set(0.0, 0.0, 0.0);
+        }
         this->pending_reset_dynamics.store(false, std::memory_order_relaxed);
     }
-
-    // Publish ground truth pose. should i publish before or after updating dynamics?
-    // geometry_msgs::msg::Pose gt_pose;
-    // gt_pose.position.x = this->gt_pose.Pos().X();
-    // gt_pose.position.y = this->gt_pose.Pos().Y();
-    // gt_pose.position.z = this->gt_pose.Pos().Z();
-    // gt_pose.orientation.w = this->gt_pose.Rot().W();
-    // gt_pose.orientation.x = this->gt_pose.Rot().X();
-    // gt_pose.orientation.y = this->gt_pose.Rot().Y();
-    // gt_pose.orientation.z = this->gt_pose.Rot().Z();
-    // this->pub_gt_pose->publish(gt_pose);
 
     // Forward latest ROS motor speeds to the MulticopterMotorModel
     if (this->motor_pub) {
@@ -251,31 +217,29 @@ void LionQuadcopter::PreUpdate(const gz::sim::UpdateInfo &info,
 void LionQuadcopter::PostUpdate(const gz::sim::UpdateInfo &info,
                                 const gz::sim::EntityComponentManager &ecm) {
     (void)info;
-    // Is reading from ecm time-consuming?
-    // Read ground truth pose. Use parent entity of model_entity. TODO: figure this shit out
-    if (auto pose_model =
-            ecm.Component<gz::sim::components::Pose>(ecm.ParentEntity(this->model_entity))) {
+    // Get the pose of the link frame in the world coordinate frame.
+    if (auto pose = this->baselink_link.WorldPose(ecm)) {
         std::lock_guard<std::mutex> lock(this->state_mutex);
-        this->gt_pose = pose_model->Data();
+        this->gt_pose = *pose;
     } else {
-        throw std::runtime_error("No pose found on model_entity");
+        throw std::runtime_error("No pose found on baselink_link");
     }
-    // Read ground truth linear velocity
-    if (auto linvel_comp =
-            ecm.Component<gz::sim::components::LinearVelocity>(this->baselink_entity)) {
-        this->gt_linear_velocity = linvel_comp->Data();
+    // Get the linear velocity at the origin of of the link frame expressed in the world frame
+    if (auto lin_vel = this->baselink_link.WorldLinearVelocity(ecm)) {
+        this->gt_linear_velocity = *lin_vel;
     } else {
-        throw std::runtime_error("No linear velocity found on baselink_entity");
+        throw std::runtime_error("No linear velocity found on baselink_link");
     }
-    // Read ground truth angular velocity
-    if (auto angvel_comp =
-            ecm.Component<gz::sim::components::AngularVelocity>(this->baselink_entity)) {
-        this->gt_angular_velocity = angvel_comp->Data();
+    // Get the angular velocity of the link in the world frame.
+    if (auto ang_vel = this->baselink_link.WorldAngularVelocity(ecm)) {
+        this->gt_angular_velocity = *ang_vel;
     } else {
-        throw std::runtime_error("No angular velocity found on model or link");
+        throw std::runtime_error("No angular velocity found on baselink_link");
     }
 
-    // Construct ground truth odometry
+    // Construct ground truth odometry. TODO: implement twist correctly wrt body frame
+    // The pose should be specified in the coordinate frame given by header.frame_id.
+    // The twist should be specified in the coordinate frame given by the child_frame_id.
     nav_msgs::msg::Odometry post_odom;
     post_odom.header.stamp = this->ros_node->now();
     post_odom.header.frame_id = std::string(this->ros_node->get_namespace()) + "/odom";
@@ -598,6 +562,7 @@ void LionQuadcopter::load_drone_config(const std::shared_ptr<const sdf::Element>
         // Base link: capture inertial and remember the link entity for fast state access
         if (scoped_name.find("/base_link") != std::string::npos) {
             this->baselink_entity = ent_id;
+            this->baselink_link = gz::sim::Link(ent_id);
             if (auto inertial = ecm.Component<gz::sim::components::Inertial>(ent_id)) {
                 mass = inertial->Data().MassMatrix().Mass();   // 1.5
                 inertia = inertial->Data().MassMatrix().Moi(); // 0.0347563 0 0 0 0.07 0 0 0 0.0977

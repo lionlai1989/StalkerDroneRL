@@ -95,6 +95,7 @@ class LionQuadcopter : public gz::sim::System,
     // Gazebo variables
     gz::sim::Entity model_entity{gz::sim::kNullEntity};    // indicates x3 drone model
     gz::sim::Entity baselink_entity{gz::sim::kNullEntity}; // indicates baselink/body of x3 drone
+    gz::sim::Link baselink_link{gz::sim::kNullEntity};     // indicates baselink/body of x3 drone
 
     bool camera_info_callback_enabled{true}; // TODO: add this flag
 
