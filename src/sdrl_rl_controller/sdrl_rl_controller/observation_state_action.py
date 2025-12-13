@@ -41,13 +41,6 @@ def compute_tracking_error(gt_pose, gt_twist, cmd_pose, cmd_twist):
     dy_w = cmd_pos.y - gt_pos.y
     dz_w = cmd_pos.z - gt_pos.z
 
-    # Velocity error (World Frame)
-    gt_v = gt_twist.linear
-    cmd_v = cmd_twist.linear
-    dvx_w = cmd_v.x - gt_v.x
-    dvy_w = cmd_v.y - gt_v.y
-    dvz_w = cmd_v.z - gt_v.z
-
     # Drone's rotating motion wrt world frame. R is Rotation of Body w.r.t World
     rotmat = quat_to_rotmat(
         gt_pose.orientation.w,
@@ -56,15 +49,20 @@ def compute_tracking_error(gt_pose, gt_twist, cmd_pose, cmd_twist):
         gt_pose.orientation.z,
     )
 
-    # Rotate errors from world frame to body frame.
-    # err_body = R.T @ err_world.
-    pos_err_w = np.array([dx_w, dy_w, dz_w])
-    vel_err_w = np.array([dvx_w, dvy_w, dvz_w])
-    pos_err_b = rotmat.T @ pos_err_w
-    vel_err_b = rotmat.T @ vel_err_w
+    # Velocity error (Body Frame)
+    # gt_twist.linear is Body Frame
+    # cmd_twist.linear is Body Frame
+    gt_v_b = np.array([gt_twist.linear.x, gt_twist.linear.y, gt_twist.linear.z])
+    cmd_v_b = np.array([cmd_twist.linear.x, cmd_twist.linear.y, cmd_twist.linear.z])
 
-    dx, dy, dz = pos_err_b
+    vel_err_b = cmd_v_b - gt_v_b
     dvx, dvy, dvz = vel_err_b
+
+    # Rotate position errors from world frame to body frame.
+    # err_body = R.T @ err_world. (the translation is cancelled out)
+    pos_err_w = np.array([dx_w, dy_w, dz_w])
+    pos_err_b = rotmat.T @ pos_err_w
+    dx, dy, dz = pos_err_b
 
     # Since the desired angular velocity is always (0, 0, 0) (check `navigator.py`),
     # the angular velocity error is effectively (0 - p, 0 - q, 0 - r).

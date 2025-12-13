@@ -45,17 +45,17 @@ class GeometricController:
 
         Inputs:
         - curr_pose: geometry_msgs/Pose (current world pose)
-        - curr_twist: geometry_msgs/Twist (current world linear vel, body angular vel)
+        - curr_twist: geometry_msgs/Twist (linear and angular velocities in body frame)
         - desired_pose: geometry_msgs/Pose (desired world pose)
-        - desired_twist: geometry_msgs/Twist (desired world linear vel, body angular vel)
+        - desired_twist: geometry_msgs/Twist (linear and angular velocities in body frame)
 
         Pose:
         - position: body frame movement in world frame
         - orientation: body frame rotation in world frame
 
         Twist:
-        - linear: linear velocities in world frame
-        - angular: angular velocities in body frame.
+        - linear: linear velocities in body frame
+        - angular: angular velocities in body frame
         """
         force, torque = self.compute_wrench(curr_pose, curr_twist, desired_pose, desired_twist)
         return wrench_to_motor_speeds(
@@ -83,9 +83,14 @@ class GeometricController:
             ],
             dtype=float,
         )
-        curr_linvel = np.array(
+        curr_rot = quat_to_rotmat(curr_wxyz[0], curr_wxyz[1], curr_wxyz[2], curr_wxyz[3])
+
+        # curr_twist.linear is in Body Frame. Convert to World Frame.
+        curr_linvel_body = np.array(
             [curr_twist.linear.x, curr_twist.linear.y, curr_twist.linear.z], dtype=float
         )
+        curr_linvel = curr_rot @ curr_linvel_body
+
         curr_angvel = np.array(
             [curr_twist.angular.x, curr_twist.angular.y, curr_twist.angular.z], dtype=float
         )
@@ -103,9 +108,12 @@ class GeometricController:
             dtype=float,
         )
         _, _, des_yaw = quat_to_euler(des_wxyz[0], des_wxyz[1], des_wxyz[2], des_wxyz[3])
-        des_lin_vel = np.array(
+
+        des_linvel_body = np.array(
             [desired_twist.linear.x, desired_twist.linear.y, desired_twist.linear.z], dtype=float
         )
+        des_lin_vel = curr_rot @ des_linvel_body
+
         des_angvel = np.array(
             [desired_twist.angular.x, desired_twist.angular.y, desired_twist.angular.z], dtype=float
         )
@@ -114,7 +122,6 @@ class GeometricController:
         e_linvel = curr_linvel - des_lin_vel
 
         # Compute force
-        curr_rot = quat_to_rotmat(curr_wxyz[0], curr_wxyz[1], curr_wxyz[2], curr_wxyz[3])
         acc_ctrl = (
             -self.kp_position * e_pos
             - self.kv_linvel * e_linvel

@@ -237,7 +237,7 @@ void LionQuadcopter::PostUpdate(const gz::sim::UpdateInfo &info,
         throw std::runtime_error("No angular velocity found on baselink_link");
     }
 
-    // Construct ground truth odometry. TODO: implement twist correctly wrt body frame
+    // Construct ground truth odometry.
     // The pose should be specified in the coordinate frame given by header.frame_id.
     // The twist should be specified in the coordinate frame given by the child_frame_id.
     nav_msgs::msg::Odometry post_odom;
@@ -253,13 +253,15 @@ void LionQuadcopter::PostUpdate(const gz::sim::UpdateInfo &info,
     post_odom.pose.pose.orientation.y = this->gt_pose.Rot().Y();
     post_odom.pose.pose.orientation.z = this->gt_pose.Rot().Z();
 
-    // Copy twist from gz::math::Vector3d
-    post_odom.twist.twist.linear.x = this->gt_linear_velocity.X();
-    post_odom.twist.twist.linear.y = this->gt_linear_velocity.Y();
-    post_odom.twist.twist.linear.z = this->gt_linear_velocity.Z();
-    post_odom.twist.twist.angular.x = this->gt_angular_velocity.X();
-    post_odom.twist.twist.angular.y = this->gt_angular_velocity.Y();
-    post_odom.twist.twist.angular.z = this->gt_angular_velocity.Z();
+    // Transform velocities from World Frame to Body Frame
+    auto linear_vel_body = this->gt_pose.Rot().RotateVectorReverse(this->gt_linear_velocity);
+    auto angular_vel_body = this->gt_pose.Rot().RotateVectorReverse(this->gt_angular_velocity);
+    post_odom.twist.twist.linear.x = linear_vel_body.X();
+    post_odom.twist.twist.linear.y = linear_vel_body.Y();
+    post_odom.twist.twist.linear.z = linear_vel_body.Z();
+    post_odom.twist.twist.angular.x = angular_vel_body.X();
+    post_odom.twist.twist.angular.y = angular_vel_body.Y();
+    post_odom.twist.twist.angular.z = angular_vel_body.Z();
 
     // Always publish post-updated odometry
     if (!this->shutting_down.load(std::memory_order_relaxed) && this->pub_gt_odom &&

@@ -47,7 +47,12 @@ from sdrl_perception import (
     intersect_ray_with_plane_z,
 )
 from sdrl_rl_controller import SacController
-from sdrl_geometric_controller.transform import quat_to_euler, roll_pitch_to_tilt, euler_to_quat
+from sdrl_geometric_controller.transform import (
+    quat_to_euler,
+    roll_pitch_to_tilt,
+    euler_to_quat,
+    quat_to_rotmat,
+)
 
 
 class BallState:
@@ -363,6 +368,10 @@ class Navigator(Node):
         if self.latest_gt_odom is None:
             return None, None
 
+        # Get current rotation for Body Frame conversion
+        curr_quat = self.latest_gt_odom.pose.pose.orientation
+        R = quat_to_rotmat(curr_quat.w, curr_quat.x, curr_quat.y, curr_quat.z)
+
         if state == "LANDED":
             # Stay at the initial pose
             pose = Pose()
@@ -398,9 +407,18 @@ class Navigator(Node):
             z_err = self.takeoff_target[2] - self.latest_gt_odom.pose.pose.position.z
             v_max = 1.0  # maximum velocity (m/s)
             k_vx, k_vy, k_vz = 0.1, 0.1, 0.3  # gain to tune
-            twist.linear.x = np.clip(k_vx * x_err, -v_max, v_max)
-            twist.linear.y = np.clip(k_vy * y_err, -v_max, v_max)
-            twist.linear.z = np.clip(k_vz * z_err, -v_max, v_max)
+
+            vx_w = np.clip(k_vx * x_err, -v_max, v_max)
+            vy_w = np.clip(k_vy * y_err, -v_max, v_max)
+            vz_w = np.clip(k_vz * z_err, -v_max, v_max)
+
+            # Convert World Frame velocity to Body Frame
+            v_world = np.array([vx_w, vy_w, vz_w])
+            v_body = R.T @ v_world
+
+            twist.linear.x = v_body[0]
+            twist.linear.y = v_body[1]
+            twist.linear.z = v_body[2]
 
             twist.angular.x = 0.0
             twist.angular.y = 0.0
@@ -433,9 +451,19 @@ class Navigator(Node):
             pose.orientation.w = qw
             twist = Twist()
             self.compute_lateral_feedforward()
-            twist.linear.x = self.flying_linvel_x
-            twist.linear.y = self.flying_linvel_y
-            twist.linear.z = 0.0
+
+            vx_w = self.flying_linvel_x
+            vy_w = self.flying_linvel_y
+            vz_w = 0.0
+
+            # Convert World Frame velocity to Body Frame
+            v_world = np.array([vx_w, vy_w, vz_w])
+            v_body = R.T @ v_world
+
+            twist.linear.x = v_body[0]
+            twist.linear.y = v_body[1]
+            twist.linear.z = v_body[2]
+
             twist.angular.x = 0.0
             twist.angular.y = 0.0
             twist.angular.z = 0.0
