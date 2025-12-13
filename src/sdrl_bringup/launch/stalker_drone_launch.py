@@ -291,7 +291,7 @@ def generate_launch_description():
             # Deterministic sequencing
             delayed_spawn_ball,
             delayed_mover,
-            delayed_tf_publisher,
+            # delayed_tf_publisher,
             delayed_rviz_node,
             delayed_navigator_launch,
             delayed_spawn_drone,
