@@ -11,7 +11,7 @@ and **Stable Baselines3**.
 ## Highlights
 
 - **ROS 2 Humble + Gazebo Harmonic + Gymnasium + Stable Baselines3** — The entire software stack uses
-  recent, long-term support versions. It is the perfect demo project illustrating how to integrate
+  recent, long-term support versions. It is a perfect demo project illustrating how to integrate
   these four open-source frameworks.
 
 - **Containerized environment** — I went through the *installation hell* of ROS 2 and
@@ -77,8 +77,8 @@ docker exec -it stalkerdronerl_dev bash
 
 4. Launch the StalkerDroneRL with the geometric controller or Soft Actor-Critic (SAC) controller.
 
-The default SAC model can be downloaded from the
-[link](https://drive.google.com/file/d/1wHCf7Fkoc3zCc1ft2Urj3eVZOVITnhos/view?usp=sharing). The SAC
+A trained SAC model can be downloaded from the
+[link](https://drive.google.com/file/d/1jwXkcSlrylg1NMXVlE2gV6EobL1yCQQT/view?usp=sharing). The SAC
 model needs to be placed at the root folder of this project `StalkerDroneRL`.
 
 ```bash
