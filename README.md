@@ -5,7 +5,8 @@
 and **Stable Baselines3**.
 
 - **SAC training and inference**: <video src="https://github.com/user-attachments/assets/3fcdfe5a-673d-4e89-94f9-632d60f8c621" controls="controls" style="max-width: 100%;"></video>
-- **Geometric controller**: <video src="https://github.com/user-attachments/assets/a0ed7a53-b3c4-4faa-8ca0-1d236d85ee02" controls="controls" style="max-width: 100%;"></video>
+- **Geometric Controller**: <video src="https://github.com/user-attachments/assets/d958ddd7-664e-4540-b214-88c5a8c5b9fc" controls="controls" style="max-width: 100%;"></video>
+
 ---
 
 ## Highlights
