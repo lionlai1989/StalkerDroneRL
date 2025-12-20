@@ -89,7 +89,7 @@ source /opt/ros/humble/setup.bash \
 && colcon build --symlink-install --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 && source "./install/setup.bash" \
 && ros2 launch sdrl_bringup stalker_drone_launch.py \
-  use_rviz:=true use_gui:=true ball_speed:=1.0 ball_trajectory:=circle control_mode:=geometric
+  use_rviz:=true use_gui:=true ball_speed:=1.0 ball_trajectory:=random control_mode:=geometric
 
 # SAC controller
 source /opt/ros/humble/setup.bash \
