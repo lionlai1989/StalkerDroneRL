@@ -70,8 +70,7 @@ class QuadcopterParams:
 
         force_z_limit = (0.0, max_total_thrust)
 
-        self.hover_thrust = self.mass * GRAVITY + 1.5  # 1.5 * 9.81 = 14.715 N, +0.5 or +1.0?
-
+        self.hover_thrust = self.mass * GRAVITY * 1.1  # Add 10% to help the drone hover.
         # Torque X = sum(y_i * F_i)
         ys = self.rotor_positions[:, 1]
         # Max positive torque: motors with positive y at max thrust

@@ -294,7 +294,7 @@ class Navigator(Node):
         self.reset_navigator()
 
         # Timer to drive the high-level state machine
-        self.navi_state_timer_period = 1 / 2.0  # 2 Hz
+        self.navi_state_timer_period = 1 / 10.0  # 10 Hz
         self.navi_state_timer = self.create_timer(
             self.navi_state_timer_period, self.state_machine_step, clock=self.clock
         )
@@ -481,7 +481,7 @@ class Navigator(Node):
         # exponential moving average (EMA) factor for smoothing
         alpha = 0.1
         # feedforward gain
-        k_ff = 0.1
+        k_ff = 0.3
         # speed clamp
         v_max = 0.5  # m/s
         # deadband to suppress minor jitter
@@ -633,7 +633,8 @@ def main(args=None):
         pass
     finally:
         navigator.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

@@ -74,8 +74,10 @@ class QuadcopterTrackingEnv(gym.Env):
         # Curriculum learning configuration
         self.curriculum_config = {
             "enabled": True,
-            "initial_success_radius": 3.0,  # Start with easier target 2
-            "final_success_radius": 0.38,  # Final tight tolerance 0.38
+            "initial_success_radius": 2.5,  # Start with easier target
+            "final_success_radius": 0.3,  # Final tight tolerance
+            "initial_random_range": 1.5,  # Start with smaller range
+            "final_random_range": 3.0,  # Expand to larger range
             "initial_difficulty_steps": 300_000,  # Steps to start increasing difficulty
             "final_difficulty_steps": 900_000,  # Steps to reach final difficulty
         }
@@ -109,7 +111,7 @@ class QuadcopterTrackingEnv(gym.Env):
             "progress_reward": 1.0,
             "danger_zone_tilt": math.pi / 6,
             "tilt_penalty": -0.5,
-            "success_reward": 5.0,
+            "success_reward": 2.5,
             "crash_penalty": -10.0,
         }
 
@@ -118,7 +120,7 @@ class QuadcopterTrackingEnv(gym.Env):
             "max_tilt_angle": math.pi / 4,  # 45 degrees
             "max_altitude": 10.0,
             "min_altitude": 0.5,
-            "success_pos_tol": 0.38,
+            "success_pos_tol": 0.3,
             "success_tilt_tol": math.radians(15),
         }
 
@@ -127,6 +129,7 @@ class QuadcopterTrackingEnv(gym.Env):
         self.cmd_odom = None
         self.navi_state = None
         self._last_pos_dist = None
+        self._last_cmd_pos = None  # Track command position to detect changes
 
         # Threading locks for thread-safe data access
         self.odom_lock = threading.Lock()
@@ -243,8 +246,21 @@ class QuadcopterTrackingEnv(gym.Env):
 
         reward += self.reward_config["vel_dist_penalty"] * vel_dist
 
-        if self._last_pos_dist is not None:
-            progress = self._last_pos_dist - pos_dist
+        if self._last_pos_dist is not None and self._last_cmd_pos is not None:
+            cmd_pos = np.array(
+                [
+                    self.cmd_odom.pose.pose.position.x,
+                    self.cmd_odom.pose.pose.position.y,
+                    self.cmd_odom.pose.pose.position.z,
+                ]
+            )
+
+            cmd_dist = np.linalg.norm(cmd_pos - self._last_cmd_pos)
+            if cmd_dist > 0.5:  # Threshold for target change detection
+                progress = 0.0
+            else:
+                progress = self._last_pos_dist - pos_dist
+
             reward += self.reward_config["progress_reward"] * progress
 
         tilt_excess = abs(tilt) - self.reward_config["danger_zone_tilt"]
@@ -319,6 +335,29 @@ class QuadcopterTrackingEnv(gym.Env):
             + self.curriculum_config["final_success_radius"] * progress_ratio
         )
         return current_success_radius
+
+    def get_random_range(self) -> float:
+        """Calculate random position range based on curriculum progress."""
+        if not self.curriculum_config["enabled"]:
+            return self.curriculum_config["initial_random_range"]
+
+        if self.global_step_count < self.curriculum_config["initial_difficulty_steps"]:
+            progress_ratio = 0.0
+        else:
+            steps_since_start = (
+                self.global_step_count - self.curriculum_config["initial_difficulty_steps"]
+            )
+            ramp_duration = (
+                self.curriculum_config["final_difficulty_steps"]
+                - self.curriculum_config["initial_difficulty_steps"]
+            )
+            progress_ratio = min(1.0, steps_since_start / ramp_duration)
+
+        current_range = (
+            self.curriculum_config["initial_random_range"] * (1 - progress_ratio)
+            + self.curriculum_config["final_random_range"] * progress_ratio
+        )
+        return current_range
 
     def step(self, action):
         """Execute one environment step.
@@ -423,6 +462,13 @@ class QuadcopterTrackingEnv(gym.Env):
         self.step_count += 1
         self.global_step_count += 1
         self._last_pos_dist = pos_dist
+        self._last_cmd_pos = np.array(
+            [
+                cmd_odom.pose.pose.position.x,
+                cmd_odom.pose.pose.position.y,
+                cmd_odom.pose.pose.position.z,
+            ]
+        )
 
         terminated = crash
         truncated = self.step_count >= self.max_steps
@@ -448,6 +494,7 @@ class QuadcopterTrackingEnv(gym.Env):
         # Reset internal state
         self.step_count = 0
         self._last_pos_dist = None
+        self._last_cmd_pos = None
         self._crash_count = 0
 
         with self.odom_lock:
@@ -517,18 +564,6 @@ class QuadcopterTrackingEnv(gym.Env):
             if not future_nav.result().success:
                 raise RuntimeError(f"Navigator reset failed: {future_nav.result().message}")
 
-            # Reset Dynamics (Zero Velocity)
-            if not self.reset_dynamics_cli.wait_for_service(timeout_sec=5.0):
-                raise RuntimeError("Dynamics reset service not available")
-            future_dyn = self.reset_dynamics_cli.call_async(Trigger.Request())
-            start_t = time.time()
-            while not future_dyn.done():
-                if time.time() - start_t > 5.0:
-                    raise RuntimeError("Dynamics reset timeout")
-                time.sleep(0.01)
-            if not future_dyn.result().success:
-                raise RuntimeError(f"Dynamics reset failed: {future_dyn.result().message}")
-
             # Zero motor speeds (Publish multiple times to ensure receipt)
             zero_msg = Float32MultiArray()
             zero_msg.data = [0.0, 0.0, 0.0, 0.0]
@@ -536,9 +571,17 @@ class QuadcopterTrackingEnv(gym.Env):
                 self.motor_pub.publish(zero_msg)
                 time.sleep(0.005)
 
-            # Reset drone to random position
-            x_rand = np.random.uniform(-1.5, 1.5)
-            y_rand = np.random.uniform(-1.5, 1.5)
+            # Reset drone to random position. TODO: This is not working as expected. The drone is
+            # still moving slightly after putting back to an initial position. Maybe we can reset it
+            # twice.
+            # We must set the pose BEFORE resetting dynamics. If we reset dynamics (zero velocity)
+            # first and then teleport, the physics engine might re-introduce velocity during the
+            # teleportation or preservation of momentum. By teleporting first, we ensure the drone
+            # is at the new location, and THEN we zero out any velocity that resulted from the move
+            # or previous state.
+            random_range = self.get_random_range()
+            x_rand = np.random.uniform(-random_range, random_range)
+            y_rand = np.random.uniform(-random_range, random_range)
             gz_client.set_pose(
                 WORLD_NAME,
                 QUADCOPTER_MODEL,
@@ -550,6 +593,20 @@ class QuadcopterTrackingEnv(gym.Env):
                 qy=0.0,
                 qz=0.0,
             )
+
+            # Reset Dynamics (Zero Velocity)
+            # We must wait for the service to be available. Since the world is paused, we use
+            # wall-clock time (time.time()) for timeouts, as the ROS clock (/clock) is not advancing.
+            if not self.reset_dynamics_cli.wait_for_service(timeout_sec=5.0):
+                raise RuntimeError("Dynamics reset service not available")
+            future_dyn = self.reset_dynamics_cli.call_async(Trigger.Request())
+            start_t = time.time()
+            while not future_dyn.done():
+                if time.time() - start_t > 5.0:
+                    raise RuntimeError("Dynamics reset timeout")
+                time.sleep(0.01)
+            if not future_dyn.result().success:
+                raise RuntimeError(f"Dynamics reset failed: {future_dyn.result().message}")
 
             # Unpause physics. why unpause? we want the whole sim to be paused, right?
             gz_client.world_control(WORLD_NAME, pause=False)
@@ -636,12 +693,6 @@ def create_training_parser():
         type=str,
         default="./tb_logs",
         help="Directory for tensorboard logs",
-    )
-    parser.add_argument(
-        "--resume",
-        type=str,
-        default=None,
-        help="Path to checkpoint to resume from",
     )
 
     # Other options
@@ -755,18 +806,10 @@ def main(argv=None):
     env = DummyVecEnv([lambda: make_env()])
 
     # Setup algorithm
-    if args.resume:
-        print(f"Loading model from: {args.resume}")
-        if args.algo != "sac":
-            raise ValueError(
-                f"Unknown or unsupported algorithm: {args.algo}. Only 'sac' is supported."
-            )
-        model = SAC.load(args.resume, env=env, device=args.device)
-    else:
-        model = setup_algorithm(args.algo, env, args)
-        # Set the model's environment explicitly (already passed into the constructor,
-        # but this keeps the pattern explicit and works if we later swap envs).
-        model.set_env(env)
+    model = setup_algorithm(args.algo, env, args)
+    # Set the model's environment explicitly (already passed into the constructor,
+    # but this keeps the pattern explicit and works if we later swap envs).
+    model.set_env(env)
 
     # Setup callbacks
     checkpoint_callback = CheckpointCallback(
@@ -794,7 +837,7 @@ def main(argv=None):
         model.learn(
             total_timesteps=args.total_timesteps,
             callback=callbacks,
-            reset_num_timesteps=False if args.resume else True,
+            reset_num_timesteps=True,
         )
 
         # Save final model
