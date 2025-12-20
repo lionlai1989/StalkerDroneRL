@@ -4,7 +4,8 @@
 *stalking a red ball*, utilizing a deep reinforcement learning controller powered by **Gymnasium**
 and **Stable Baselines3**.
 
-- **SAC training and inference**: <video src="https://github.com/user-attachments/assets/3fcdfe5a-673d-4e89-94f9-632d60f8c621" controls="controls" style="max-width: 100%;"></video>
+- **SAC Training**: <video src="https://github.com/user-attachments/assets/93c5867d-ab51-4dbf-b46d-2dea4ee7c4aa" controls="controls" style="max-width: 100%;"></video>
+- **SAC Inference**: <video src="" controls="controls" style="max-width: 100%;"></video>
 - **Geometric Controller**: <video src="https://github.com/user-attachments/assets/d958ddd7-664e-4540-b214-88c5a8c5b9fc" controls="controls" style="max-width: 100%;"></video>
 
 ---
