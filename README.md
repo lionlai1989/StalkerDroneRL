@@ -10,6 +10,10 @@ and **Stable Baselines3**.
 
 ---
 
+TODO: Due to the bug fix in `quadcopter_params.py` and `geometric_controller.py` in the latest
+commit, the SAC controller needs to be retrained from scratch. The geometric controller still works
+like a charm. If you want to try SAC controller, you need to checkout the commit `e862459`.
+
 ## Highlights
 
 - **ROS 2 Humble + Gazebo Harmonic + Gymnasium + Stable Baselines3** — The entire software stack uses

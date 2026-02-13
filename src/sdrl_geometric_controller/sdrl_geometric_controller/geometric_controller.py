@@ -32,9 +32,9 @@ class GeometricController:
         # Derivative gain on linear velocity error for linear velocity control
         self.kv_linvel = 5.0
         # Proportional gain on rotation matrix error for rotation matrix control
-        self.kr_rotmat = 6.0
+        self.kr_rotmat = np.array([6.0, 6.0, 3.0])
         # Derivative gain on angular velocity error for angular velocity control
-        self.kw_angvel = 3.0
+        self.kw_angvel = np.array([3.0, 3.0, 1.5])
 
         self.drone_params = QuadcopterParams()
 
@@ -122,21 +122,22 @@ class GeometricController:
         e_linvel = curr_linvel - des_lin_vel
 
         # Compute force
-        acc_ctrl = (
+        acc_cmd = (
             -self.kp_position * e_pos
             - self.kv_linvel * e_linvel
             + GRAVITY * np.array([0.0, 0.0, 1.0])
         )  # Control acceleration from PD control and gravity. Discard the desired acc.
-        body_z = curr_rot[:, 2]
-        force = self.drone_params.mass * float(np.dot(acc_ctrl, body_z))
-        if force < 0.0:  # NOTE: what would happen if force is negative?
-            force = 0.0
+        # Build desired attitude from a saturated acceleration command so the command is physically
+        # feasible under thrust/tilt constraints.
+        desired_rot, acc_cmd = self.compute_desired_orientation(acc_cmd, des_yaw)
+        # Thrust is along body z-axis, so project commanded world acceleration onto body z-axis.
+        force = self.drone_params.mass * float(np.dot(acc_cmd, curr_rot[:, 2]))
+        # Explicit force saturation to match actuator capability.
+        force = float(
+            np.clip(force, self.drone_params.force_z_limit[0], self.drone_params.force_z_limit[1])
+        )
 
         # Compute torque
-        acc_mag = np.linalg.norm(acc_ctrl)
-        if acc_mag > self.drone_params.max_accel:
-            acc_ctrl = acc_ctrl * (self.drone_params.max_accel / acc_mag)
-        desired_rot = self.compute_desired_orientation(acc_ctrl, des_yaw)
         e_rot = rotation_error(curr_rot, desired_rot)
         e_angvel = curr_angvel - curr_rot.T.dot(desired_rot.dot(des_angvel))
         torque = (
@@ -147,11 +148,33 @@ class GeometricController:
         return force, torque
 
     def compute_desired_orientation(self, acc, yaw):
+        """Compute desired attitude from acceleration and yaw.
+
+        Returns:
+            R_d: desired rotation matrix (body axes in world frame)
+            a: saturated acceleration command actually used to build R_d
+
+        Saturation strategy:
+        1) Keep vertical acceleration positive to avoid inverted thrust.
+        2) Enforce thrust-limited total acceleration (max_accel).
+        3) Enforce tilt-limited horizontal acceleration.
+        """
         a = acc.copy()
+        # Keep positive vertical acceleration so desired thrust direction stays
+        # well-defined and points generally upward.
         if a[2] < 1e-6:
             a[2] = 1e-6
+        # Prioritize vertical channel first; altitude authority is more critical
+        # than lateral authority during aggressive commands.
+        if a[2] > self.drone_params.max_accel:
+            a[2] = self.drone_params.max_accel
         horiz = math.hypot(a[0], a[1])
-        max_horiz = math.tan(self.drone_params.max_tilt_angle) * abs(a[2])
+        # Horizontal acceleration must satisfy BOTH:
+        # - thrust sphere: ||a|| <= max_accel
+        # - tilt cone:     ||a_xy|| <= tan(max_tilt) * |a_z|
+        max_horiz_by_thrust = math.sqrt(max(0.0, self.drone_params.max_accel**2 - a[2] ** 2))
+        max_horiz_by_tilt = math.tan(self.drone_params.max_tilt_angle) * abs(a[2])
+        max_horiz = min(max_horiz_by_thrust, max_horiz_by_tilt)
         if horiz > max_horiz:
             scale = max_horiz / (horiz + 1e-9)
             a[0] *= scale
@@ -163,7 +186,8 @@ class GeometricController:
             z_w_des = np.array([0.0, 0.0, 1.0])
         # Desired heading direction in world xy-plane
         x_c_des = np.array([math.cos(yaw), math.sin(yaw), 0.0])
-        # Check for near-singularity
+        # If heading direction and z-axis become nearly collinear, perturb yaw
+        # slightly to keep cross-products numerically stable.
         if abs(float(np.dot(z_w_des, x_c_des))) > 0.999:
             x_c_des = np.array([math.cos(yaw + 0.01), math.sin(yaw + 0.01), 0.0])
         # Compute orthonormal basis
@@ -173,4 +197,4 @@ class GeometricController:
         x_w_des /= float(np.linalg.norm(x_w_des))
         # Rotation matrix columns are body axes in world frame
         R_d = np.column_stack((x_w_des, y_w_des, z_w_des))
-        return R_d
+        return R_d, a

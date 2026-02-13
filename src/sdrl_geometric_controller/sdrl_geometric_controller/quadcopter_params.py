@@ -16,8 +16,11 @@ class QuadcopterParams:
         self.inertia = np.array([0.0347563, 0.07, 0.0977], dtype=float)
         # Thrust coefficient cf or motorConstant (N / (rad/s)^2)
         self.rotor_cf = 8.54858e-06
-        # Drag coefficient cd or momentConstant (N*m / (rad/s)^2)
-        self.rotor_cd = 0.016
+        # Moment constant (meter, i.e. torque (N*m) / thrust (N) ratio) from gz-sim <momentConstant>
+        # Read https://github.com/gazebosim/gz-sim/blob/gz-sim10/src/systems/multicopter_motor_model/MulticopterMotorModel.cc
+        self.moment_constant = 0.016
+        # Drag (yaw torque) coefficient cd or k_m (N*m / (rad/s)^2)
+        self.rotor_cd = self.rotor_cf * self.moment_constant
         # Maximum rotor angular velocity (rad/s)
         self.motor_max_rot_velocity = 800.0
         # Rotor positions (x, y, z) in body frame. All rotations are identity matrix.
@@ -29,8 +32,17 @@ class QuadcopterParams:
                 [-0.13, -0.2, 0.023],
             ]
         )
-        # Rotor yaw torque directions (+1 for ccw, -1 for cw)
-        self.yaw_signs = np.array([+1, +1, -1, -1])
+
+        # If a rotor spins:
+        #   CCW, the body experiences a CW reaction torque
+        #   CW, the body experiences a CCW reaction torque
+        # In ROS (read https://www.ros.org/reps/rep-0103.html):
+        #   +Z is up
+        #   +yaw is CCW when viewed from above
+        # So, if a rotor spins:
+        #   CW, the body experiences a CCW reaction torque, yaw sign is +1.
+        #   CCW, the body experiences a CW reaction torque, yaw sign is -1.
+        self.yaw_signs = np.array([-1, -1, +1, +1])
 
         # max tilt angle for the drone (rad)
         self.max_tilt_angle = math.pi / 12
@@ -47,6 +59,7 @@ class QuadcopterParams:
 
         assert self.max_accel > 0.0, "Max acceleration must be positive"
         assert self.rotor_cf > 0.0, "rotor_cf must be positive"
+        assert self.moment_constant > 0.0, "moment_constant must be positive"
         assert self.rotor_cd > 0.0, "rotor_cd must be positive"
         assert self.motor_max_rot_velocity > 0.0, "motor_max_rot_velocity must be positive"
 
@@ -96,10 +109,10 @@ class QuadcopterParams:
         tz_min = np.sum(self.yaw_signs[self.yaw_signs < 0]) * max_moment_per_motor
         torque_z_limit = (tz_min, tz_max)
         # Print the wrench limits shows:
-        # force_z_limit: (0.0, 21.8843648) -> OK
-        # torque_x_limit: (-2.297858304, 2.297858304) -> OK
-        # torque_y_limit: (-1.422483712, 1.422483712) -> OK
-        # torque_z_limit: (-20480.0, 20480.0) -> NOT OK. TOO LARGE. rotor_cd needs to be adjusted.
+        print(f"force_z_limit: {force_z_limit}")  # (0.0, 21.8843648) -> OK
+        print(f"torque_x_limit: {torque_x_limit}")  # (-2.297858304, 2.297858304) -> OK
+        print(f"torque_y_limit: {torque_y_limit}")  # (-1.422483712, 1.422483712) -> OK
+        print(f"torque_z_limit: {torque_z_limit}")  # (-0.1750749184, 0.1750749184) -> OK
 
         # TODO: To prevent the drone from crashing, limit torque. Consider curriculum learning.
         torque_x_limit = (-0.1, 0.1)
