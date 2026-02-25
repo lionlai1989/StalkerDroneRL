@@ -1,4 +1,4 @@
-# StalkerDroneRL - ROS 2 + Gazebo + Gymnasium + Stable Baselines3 Drone Simulation
+# StalkerDroneRL
 
 **StalkerDroneRL** is a fully containerized **ROS 2** + **Gazebo** project that simulates a quadcopter
 *stalking a red ball*, utilizing a deep reinforcement learning controller powered by **Gymnasium**
