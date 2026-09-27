@@ -24,12 +24,14 @@ MAX_ANG_VEL = 6.28  # 2π rad/s ~= 360 deg/s
 
 def compute_tracking_error(gt_pose, gt_twist, cmd_pose, cmd_twist):
     """
-    Compute tracking error between ground truth and commanded pose/twist without normalization.
+    Compute command-minus-measurement errors in the actual body frame, without normalization.
+    Position and velocity commands are independent setpoints.
     Args:
-        gt_pose: geometry_msgs.msg.Pose
-        gt_twist: geometry_msgs.msg.Twist
-        cmd_pose: geometry_msgs.msg.Pose
-        cmd_twist: geometry_msgs.msg.Twist
+        gt_pose: actual body pose in world coordinates.
+        gt_twist: world-relative velocities expressed in the actual body frame.
+        cmd_pose: world position setpoint and reference-frame orientation.
+        cmd_twist: world-relative linear velocity expressed in the reference frame;
+            angular velocity must be zero (no rate feedforward).
     Returns:
         tuple: (dx, dy, dz, dvx, dvy, dvz, roll, pitch, yaw, p, q, r)
     """
@@ -49,13 +51,18 @@ def compute_tracking_error(gt_pose, gt_twist, cmd_pose, cmd_twist):
         gt_pose.orientation.z,
     )
 
-    # Velocity error (Body Frame)
-    # gt_twist.linear is Body Frame
-    # cmd_twist.linear is Body Frame
-    gt_v_b = np.array([gt_twist.linear.x, gt_twist.linear.y, gt_twist.linear.z])
-    cmd_v_b = np.array([cmd_twist.linear.x, cmd_twist.linear.y, cmd_twist.linear.z])
+    reference_rot = quat_to_rotmat(
+        cmd_pose.orientation.w,
+        cmd_pose.orientation.x,
+        cmd_pose.orientation.y,
+        cmd_pose.orientation.z,
+    )
 
-    vel_err_b = cmd_v_b - gt_v_b
+    # Convert the reference-frame command to the actual body frame before subtraction.
+    gt_v_b = np.array([gt_twist.linear.x, gt_twist.linear.y, gt_twist.linear.z])
+    cmd_linvel_ref = np.array([cmd_twist.linear.x, cmd_twist.linear.y, cmd_twist.linear.z])
+
+    vel_err_b = rotmat.T @ reference_rot @ cmd_linvel_ref - gt_v_b
     dvx, dvy, dvz = vel_err_b
 
     # Rotate position errors from world frame to body frame.
@@ -64,13 +71,11 @@ def compute_tracking_error(gt_pose, gt_twist, cmd_pose, cmd_twist):
     pos_err_b = rotmat.T @ pos_err_w
     dx, dy, dz = pos_err_b
 
-    # Since the desired angular velocity is always (0, 0, 0) (check `navigator.py`),
-    # the angular velocity error is effectively (0 - p, 0 - q, 0 - r).
-    # We use the raw angular velocity in Body Frame as it contains the same information.
+    # Measured body rates are observation features; angular-rate feedforward is unsupported.
     ang_vel = gt_twist.angular
     p, q, r = ang_vel.x, ang_vel.y, ang_vel.z
 
-    # The desired roll and pitch are 0 (level flight), so these act as errors.
+    # Actual roll and pitch are posture features, not errors against the control attitude.
     # Yaw is calculated but not used in the state vector.
     roll, pitch, yaw = quat_to_euler(
         gt_pose.orientation.w,

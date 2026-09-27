@@ -15,6 +15,7 @@ from sdrl_geometric_controller.quadcopter_params import QuadcopterParams, GRAVIT
 
 
 def rotation_error(rot_current: np.ndarray, rot_desired: np.ndarray) -> np.ndarray:
+    """Return twice the standard geometric attitude error, preserving the tuned gain scale."""
     rot_err = rot_desired.T @ rot_current - rot_current.T @ rot_desired
     return np.array(
         [
@@ -29,11 +30,11 @@ class GeometricController:
     def __init__(self):
         # Proportional gain on position error for position control
         self.kp_position = 3.0
-        # Derivative gain on linear velocity error for linear velocity control
+        # Gain on the world-frame velocity setpoint error
         self.kv_linvel = 5.0
         # Proportional gain on rotation matrix error for rotation matrix control
         self.kr_rotmat = np.array([6.0, 6.0, 3.0])
-        # Derivative gain on angular velocity error for angular velocity control
+        # Damping gain on measured body angular velocity
         self.kw_angvel = np.array([3.0, 3.0, 1.5])
 
         self.drone_params = QuadcopterParams()
@@ -44,18 +45,14 @@ class GeometricController:
         """Compute 4 motor speeds (rad/s) from current and desired states.
 
         Inputs:
-        - curr_pose: geometry_msgs/Pose (current world pose)
-        - curr_twist: geometry_msgs/Twist (linear and angular velocities in body frame)
-        - desired_pose: geometry_msgs/Pose (desired world pose)
-        - desired_twist: geometry_msgs/Twist (linear and angular velocities in body frame)
+        - curr_pose: actual body pose in world coordinates.
+        - curr_twist: world-relative velocities expressed in the actual body frame.
+        - desired_pose: world position setpoint and reference-frame orientation.
+        - desired_twist: world-relative linear velocity setpoint expressed in that
+          reference frame; angular velocity must be zero (no rate feedforward).
 
-        Pose:
-        - position: body frame movement in world frame
-        - orientation: body frame rotation in world frame
-
-        Twist:
-        - linear: linear velocities in body frame
-        - angular: angular velocities in body frame
+        Position and velocity are independent setpoints. The reference orientation
+        supplies the velocity basis and heading; thrust determines the control attitude.
         """
         force, torque = self.compute_wrench(curr_pose, curr_twist, desired_pose, desired_twist)
         return wrench_to_motor_speeds(
@@ -109,14 +106,11 @@ class GeometricController:
         )
         _, _, des_yaw = quat_to_euler(des_wxyz[0], des_wxyz[1], des_wxyz[2], des_wxyz[3])
 
-        des_linvel_body = np.array(
+        cmd_linvel_ref = np.array(
             [desired_twist.linear.x, desired_twist.linear.y, desired_twist.linear.z], dtype=float
         )
-        des_lin_vel = curr_rot @ des_linvel_body
-
-        des_angvel = np.array(
-            [desired_twist.angular.x, desired_twist.angular.y, desired_twist.angular.z], dtype=float
-        )
+        reference_rot = quat_to_rotmat(des_wxyz[0], des_wxyz[1], des_wxyz[2], des_wxyz[3])
+        des_lin_vel = reference_rot @ cmd_linvel_ref
 
         e_pos = curr_pos - des_pos
         e_linvel = curr_linvel - des_lin_vel
@@ -126,10 +120,10 @@ class GeometricController:
             -self.kp_position * e_pos
             - self.kv_linvel * e_linvel
             + GRAVITY * np.array([0.0, 0.0, 1.0])
-        )  # Control acceleration from PD control and gravity. Discard the desired acc.
+        )  # Independent position/velocity feedback and gravity compensation.
         # Build desired attitude from a saturated acceleration command so the command is physically
         # feasible under thrust/tilt constraints.
-        desired_rot, acc_cmd = self.compute_desired_orientation(acc_cmd, des_yaw)
+        control_rot, acc_cmd = self.compute_desired_orientation(acc_cmd, des_yaw)
         # Thrust is along body z-axis, so project commanded world acceleration onto body z-axis.
         force = self.drone_params.mass * float(np.dot(acc_cmd, curr_rot[:, 2]))
         # Explicit force saturation to match actuator capability.
@@ -137,12 +131,11 @@ class GeometricController:
             np.clip(force, self.drone_params.force_z_limit[0], self.drone_params.force_z_limit[1])
         )
 
-        # Compute torque
-        e_rot = rotation_error(curr_rot, desired_rot)
-        e_angvel = curr_angvel - curr_rot.T.dot(desired_rot.dot(des_angvel))
+        # Attitude feedback and actual-body-rate damping; no angular-rate feedforward.
+        e_rot = rotation_error(curr_rot, control_rot)
         torque = (
             -self.kr_rotmat * e_rot
-            - self.kw_angvel * e_angvel
+            - self.kw_angvel * curr_angvel
             + np.cross(curr_angvel, self.drone_params.inertia * curr_angvel)
         )
         return force, torque

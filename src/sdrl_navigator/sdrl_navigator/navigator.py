@@ -361,16 +361,14 @@ class Navigator(Node):
         self,
         state: str,
     ) -> Tuple[Optional[Pose], Optional[Twist]]:
-        """Compute desired Pose and Twist for the current state.
+        """Compute independent world-position and reference-frame velocity setpoints.
 
+        The pose orientation defines the velocity basis and heading. Angular velocity
+        is zero because the controllers do not support angular-rate feedforward.
         Returns a tuple (Pose, Twist); returns (None, None) if no command should be sent.
         """
         if self.latest_gt_odom is None:
             return None, None
-
-        # Get current rotation for Body Frame conversion
-        curr_quat = self.latest_gt_odom.pose.pose.orientation
-        R = quat_to_rotmat(curr_quat.w, curr_quat.x, curr_quat.y, curr_quat.z)
 
         if state == "LANDED":
             # Stay at the initial pose
@@ -412,13 +410,16 @@ class Navigator(Node):
             vy_w = np.clip(k_vy * y_err, -v_max, v_max)
             vz_w = np.clip(k_vz * z_err, -v_max, v_max)
 
-            # Convert World Frame velocity to Body Frame
+            # Express the world velocity command in the pose's reference frame.
+            reference_rot = quat_to_rotmat(
+                pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z
+            )
             v_world = np.array([vx_w, vy_w, vz_w])
-            v_body = R.T @ v_world
+            cmd_linvel_ref = reference_rot.T @ v_world
 
-            twist.linear.x = v_body[0]
-            twist.linear.y = v_body[1]
-            twist.linear.z = v_body[2]
+            twist.linear.x = cmd_linvel_ref[0]
+            twist.linear.y = cmd_linvel_ref[1]
+            twist.linear.z = cmd_linvel_ref[2]
 
             twist.angular.x = 0.0
             twist.angular.y = 0.0
@@ -456,13 +457,16 @@ class Navigator(Node):
             vy_w = self.flying_linvel_y
             vz_w = 0.0
 
-            # Convert World Frame velocity to Body Frame
+            # Express the world velocity command in the pose's reference frame.
+            reference_rot = quat_to_rotmat(
+                pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z
+            )
             v_world = np.array([vx_w, vy_w, vz_w])
-            v_body = R.T @ v_world
+            cmd_linvel_ref = reference_rot.T @ v_world
 
-            twist.linear.x = v_body[0]
-            twist.linear.y = v_body[1]
-            twist.linear.z = v_body[2]
+            twist.linear.x = cmd_linvel_ref[0]
+            twist.linear.y = cmd_linvel_ref[1]
+            twist.linear.z = cmd_linvel_ref[2]
 
             twist.angular.x = 0.0
             twist.angular.y = 0.0
@@ -551,10 +555,12 @@ class Navigator(Node):
         )
         if desired_pose is None or desired_twist is None:
             return
+        # Independent setpoints: pose in odom, velocity in the pose's reference frame.
+        # The virtual command frame is distinct from the actual tilted body frame.
         odom = Odometry()
         odom.header.stamp = self.get_clock().now().to_msg()
         odom.header.frame_id = "/X3/odom"
-        odom.child_frame_id = "/X3/base_footprint"
+        odom.child_frame_id = "/X3/command_reference"
         odom.pose.pose = desired_pose
         odom.twist.twist = desired_twist
         self.latest_desired_odom = odom
